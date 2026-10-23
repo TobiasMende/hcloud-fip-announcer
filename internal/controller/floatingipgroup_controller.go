@@ -237,6 +237,7 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 		AntiFlap:   r.AntiFlap,
 		LeaderNode: r.LeaderNode,
 		FIPCount:   counts,
+		HomeNodes:  r.homeNodes(ctx, snap, eligible, fips[0].fip.HomeLocation),
 	}
 	if group.Status.Since != nil {
 		in.LastMove = group.Status.Since.Time

@@ -335,3 +335,24 @@ func moveReason(r eligibility.Reason) v1alpha1.MoveReason {
 		return v1alpha1.MoveReasonNodeNotReady
 	}
 }
+
+// homeNodes returns the nodes whose server sits in the Floating IPs' home
+// location, so placement can avoid an extra hop to another data centre.
+func (r *FloatingIPGroupReconciler) homeNodes(ctx context.Context, s *snapshot, nodes []string,
+	location string) map[string]bool {
+	home := map[string]bool{}
+	for _, name := range nodes {
+		n := s.byName[name]
+		if n == nil {
+			continue
+		}
+		id, err := r.serverOf(ctx, n)
+		if err != nil {
+			continue
+		}
+		if srv, err := r.hcache().server(ctx, id); err == nil && srv.Location == location {
+			home[name] = true
+		}
+	}
+	return home
+}

@@ -56,9 +56,11 @@ otherwise it reports `NoMembers` and the IPs are not placed.
 - **Stick**: if the holder is eligible, nothing happens. There is no failback
   and no rebalancing.
 - **Move** when the holder stops being eligible. The target is the eligible
-  node holding the fewest IPs of other groups, then (avoiding the node the
-  leader pod runs on) the first by name. All IPs of the group are assigned to
-  it together.
+  node in the IPs' home location (Hetzner routes a Floating IP across its
+  network zone, but another location costs an extra hop), then the node
+  holding the fewest IPs of other groups, then (avoiding the node the leader
+  pod runs on) the first by name. All IPs of the group are assigned to it
+  together.
 - **No eligible node**: the IPs stay where they are, the group is `Degraded`
   (`NoEligibleNode`), a warning event is emitted. They are never assigned to
   an ineligible node.

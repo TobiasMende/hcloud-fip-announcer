@@ -55,6 +55,7 @@ const (
 	testClass     = "fip-announcer.inocea.de/floating-ip"
 	testZone      = "eu-central"
 	testLocation  = "fsn1"
+	serverRunning = "running"
 	testNamespace = "default"
 )
 
@@ -155,7 +156,7 @@ func newEnv(suffixes []string, withEndpoints ...string) *env {
 		node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
 		Expect(k8sClient.Status().Update(bg, node)).To(Succeed())
 		waitCached(node)
-		e.fake.AddServer(hetzner.Server{ID: e.serverID(s), Name: e.node(s), Status: "running", Location: testLocation, NetworkZone: testZone})
+		e.fake.AddServer(hetzner.Server{ID: e.serverID(s), Name: e.node(s), Status: serverRunning, Location: testLocation, NetworkZone: testZone})
 	}
 
 	e.svc = e.addService(e.group, nil, withEndpoints...)
@@ -561,7 +562,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 	It("TestRefusesFIPOnNonClusterServer", func() {
 		e := newEnv([]string{"a"}, "a")
 		foreign := e.n*100 + 99
-		e.fake.AddServer(hetzner.Server{ID: foreign, Name: "not-a-node", Status: "running", NetworkZone: testZone})
+		e.fake.AddServer(hetzner.Server{ID: foreign, Name: "not-a-node", Status: serverRunning, NetworkZone: testZone})
 		e.addFIP(familyIPv4, foreign, nil)
 		e.createGroup(familyIPv4)
 
@@ -603,6 +604,20 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		g = e.get()
 		Expect(g.Status.Node).To(Equal(e.node("b")))
 		Expect(g.Status.Since).To(Equal(since))
+	})
+
+	It("TestMovePrefersHomeLocation", func() {
+		e := newEnv([]string{"a", "b", "c"}, "a", "b", "c")
+		e.fake.AddServer(hetzner.Server{ID: e.serverID("b"), Name: e.node("b"), Status: serverRunning, Location: "nbg1", NetworkZone: testZone})
+		e.createGroup(familyIPv4)
+		e.mustReconcile()
+		Expect(e.get().Status.Node).To(Equal(e.node("a")))
+
+		e.cordon()
+		e.clock.Advance(time.Second)
+		e.mustReconcile()
+
+		Expect(e.get().Status.Node).To(Equal(e.node("c")))
 	})
 
 	It("TestCordonMovesBothFamiliesTogether", func() {
