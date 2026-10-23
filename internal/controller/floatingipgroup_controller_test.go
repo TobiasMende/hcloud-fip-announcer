@@ -460,6 +460,20 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		Expect(testutil.ToFloat64(degradedGauge.WithLabelValues(e.group))).To(BeZero())
 	})
 
+	It("TestMoveCountersStartAtZero", func() {
+		e := newEnv([]string{"a"}, "a")
+		e.createGroup(familyIPv4)
+		before := testutil.CollectAndCount(movesTotal)
+		e.mustReconcile()
+		Expect(testutil.CollectAndCount(movesTotal)).To(Equal(before + len(moveReasons)))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonProbeFailed)))).To(BeZero())
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonInitial)))).To(Equal(1.0))
+
+		Expect(k8sClient.Delete(context.Background(), e.get())).To(Succeed())
+		e.mustReconcile()
+		Expect(testutil.CollectAndCount(movesTotal)).To(Equal(before))
+	})
+
 	It("TestCreatesWhenMissing", func() {
 		e := newEnv([]string{"a"}, "a")
 		e.createGroup(familyIPv4, familyIPv6)
@@ -990,6 +1004,8 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 			}
 		}
 		Expect(invalid).To(Equal(1))
+		Expect(e.prober.targetsOf(name)).To(HaveExactElements(
+			HaveField("Check", probe.Check{Kind: probe.KindTCP, Port: 8080})), "falls back to the default check")
 
 		By("a Service that is no longer a member is forgotten")
 		Expect(k8sClient.Delete(context.Background(), svc)).To(Succeed())

@@ -322,8 +322,12 @@ func TestDefaultTCPCheckFromServicePort(t *testing.T) {
 	}
 
 	svc.Annotations["fip-announcer.inocea.de/health-check"] = "bogus"
-	if _, _, err := CheckFor(svc, slice); err == nil {
+	c, ok, err = CheckFor(svc, slice)
+	if err == nil {
 		t.Fatal("invalid annotation must error")
+	}
+	if !ok || c != (Check{Kind: KindTCP, Port: 8080}) {
+		t.Fatalf("invalid annotation falls back to the default check: got %+v ok=%v", c, ok)
 	}
 }
 

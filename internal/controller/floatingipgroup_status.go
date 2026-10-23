@@ -86,6 +86,7 @@ func (r *FloatingIPGroupReconciler) finish(ctx context.Context, group *v1alpha1.
 
 func (r *FloatingIPGroupReconciler) updateMetrics(group *v1alpha1.FloatingIPGroup, out outcome) {
 	name := group.Name
+	initGroupMetrics(name)
 	eligibleNodesGauge.WithLabelValues(name).Set(float64(out.eligible))
 	degradedGauge.WithLabelValues(name).Set(boolFloat(out.degraded))
 	if group.Status.Since != nil {

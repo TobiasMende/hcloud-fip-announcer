@@ -19,6 +19,8 @@ package controller
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
+
+	"github.com/TobiasMende/hcloud-fip-announcer/api/v1alpha1"
 )
 
 const labelGroup = "group"
@@ -45,6 +47,20 @@ var (
 		Help: "1 when the group is Degraded.",
 	}, []string{labelGroup})
 )
+
+var moveReasons = []v1alpha1.MoveReason{
+	v1alpha1.MoveReasonInitial, v1alpha1.MoveReasonNodeCordoned, v1alpha1.MoveReasonProbeFailed,
+	v1alpha1.MoveReasonEndpointsNotReady, v1alpha1.MoveReasonNodeNotReady, v1alpha1.MoveReasonServerGone,
+	v1alpha1.MoveReasonExternal,
+}
+
+// initGroupMetrics creates the move counters of a group at 0, so rate() and
+// increase() see the first move.
+func initGroupMetrics(group string) {
+	for _, reason := range moveReasons {
+		movesTotal.WithLabelValues(group, string(reason))
+	}
+}
 
 func init() {
 	metrics.Registry.MustRegister(assignmentGauge, movesTotal, lastMoveGauge, eligibleNodesGauge, degradedGauge)

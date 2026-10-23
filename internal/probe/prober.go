@@ -78,19 +78,23 @@ func ParseCheck(annotation string) (Check, error) {
 
 // CheckFor returns the probe for a Service: the annotation if present, else a
 // TCP connect to the first TCP endpoint port. ok is false when there is
-// nothing to probe (e.g. UDP only) and readiness alone decides.
+// nothing to probe (e.g. UDP only) and readiness alone decides. An invalid
+// annotation is returned as err together with the default check.
 func CheckFor(svc corev1.Service, slice discoveryv1.EndpointSlice) (Check, bool, error) {
+	var err error
 	if a, found := svc.Annotations[HealthCheckAnnotation]; found {
-		c, err := ParseCheck(a)
-		return c, err == nil, err
+		var c Check
+		if c, err = ParseCheck(a); err == nil {
+			return c, true, nil
+		}
 	}
 	for _, p := range slice.Ports {
 		if p.Port == nil || (p.Protocol != nil && *p.Protocol != corev1.ProtocolTCP) {
 			continue
 		}
-		return Check{Kind: KindTCP, Port: int(*p.Port)}, true, nil
+		return Check{Kind: KindTCP, Port: int(*p.Port)}, true, err
 	}
-	return Check{}, false, nil
+	return Check{}, false, err
 }
 
 var probeHealthy = prometheus.NewGaugeVec(prometheus.GaugeOpts{

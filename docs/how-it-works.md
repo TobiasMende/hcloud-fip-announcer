@@ -78,7 +78,8 @@ The check comes from the Service annotation `fip-announcer.inocea.de/health-chec
 (`http://:<port><path>`, 2xx expected, or `tcp://:<port>`). Without the
 annotation the controller does a TCP connect to the first TCP port of the
 endpoints; a UDP-only Service without annotation is decided by readiness
-alone. Probes never call the Hetzner API. In a default-deny namespace the
+alone. An invalid annotation emits an `InvalidHealthCheck` event and uses
+that default. Probes never call the Hetzner API. In a default-deny namespace the
 controller needs egress to those pods (see the chart's `NOTES.txt` for a
 NetworkPolicy).
 

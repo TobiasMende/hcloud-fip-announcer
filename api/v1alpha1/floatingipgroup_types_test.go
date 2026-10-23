@@ -118,3 +118,17 @@ func TestLocationRequired(t *testing.T) {
 		t.Fatal("expected empty location to be rejected")
 	}
 }
+
+func TestIPv6AddressMustBeIPv6(t *testing.T) {
+	for addr, valid := range map[string]bool{"::1": true, "::abcd:1": true, "203.0.113.1": false, "not-an-ip": false} {
+		name := "v6addr-" + strings.NewReplacer(":", "c", ".", "d").Replace(addr)
+		g := newGroup(name, FloatingIPGroupSpec{Location: testLocation, IPv6: &FloatingIPRef{Name: "b", IPv6Address: addr}})
+		err := k8sClient.Create(context.Background(), g)
+		if valid && err != nil {
+			t.Errorf("%s rejected: %v", addr, err)
+		}
+		if !valid && err == nil {
+			t.Errorf("%s accepted", addr)
+		}
+	}
+}

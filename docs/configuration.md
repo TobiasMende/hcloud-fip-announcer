@@ -10,7 +10,7 @@ Reason, Age.
 | `spec.location` | string, required | | Hetzner home location (e.g. `fsn1`) for Floating IPs the controller creates. Adopted IPs keep theirs. |
 | `spec.ipv4.name` | string, required if `ipv4` set | | Hetzner Floating IP name; adopted if it exists, created otherwise. |
 | `spec.ipv6.name` | string, required if `ipv6` set | | Same for IPv6. |
-| `spec.ipv6.ipv6Address` | string | `::1` | Address taken from the /64 and written to Service status. (Also accepted under `ipv4`, where it is unused.) |
+| `spec.ipv6.ipv6Address` | string | `::1` | Address taken from the /64 and written to Service status; must be a valid IPv6 address. (Also accepted under `ipv4`, where it is unused.) |
 | `spec.deletionPolicy` | `Retain` or `Delete` | `Retain` | `Retain` leaves the Floating IPs in Hetzner when the group is deleted. `Delete` disables delete protection, unassigns and deletes them, but only IPs labelled for this cluster and group. |
 | `spec.nodeSelector` | label selector | none | Restricts eligible nodes; AND-combined with the member Services. A selector that matches control-plane nodes admits them. |
 
@@ -51,7 +51,7 @@ A Service is a member when it is `type: LoadBalancer`, matches the controller's
 | Annotation | Description |
 |---|---|
 | `fip-announcer.inocea.de/group` | Name of the `FloatingIPGroup`. Required. When it is removed, or the group does not exist or is being deleted, the controller clears the addresses it wrote (see below). |
-| `fip-announcer.inocea.de/health-check` | `http://:<port><path>` (HTTP GET, 2xx expected) or `tcp://:<port>`. The host must be empty; probes go to the pod IPs of the ready endpoints on each node. Absent: TCP connect to the first TCP endpoint port; UDP-only Services are decided by endpoint readiness. An invalid value emits an `InvalidHealthCheck` event. |
+| `fip-announcer.inocea.de/health-check` | `http://:<port><path>` (HTTP GET, 2xx expected) or `tcp://:<port>`. The host must be empty; probes go to the pod IPs of the ready endpoints on each node. Absent: TCP connect to the first TCP endpoint port; UDP-only Services are decided by endpoint readiness. An invalid value emits an `InvalidHealthCheck` event and falls back to the default check (as if absent). |
 
 `spec.loadBalancerClass` must equal `--load-balancer-class`
 (default `fip-announcer.inocea.de/floating-ip`). It is immutable on existing
@@ -160,7 +160,7 @@ Chart: `oci://ghcr.io/tobiasmende/charts/hcloud-fip-announcer`.
 | Metric | Labels | Description |
 |---|---|---|
 | `fip_announcer_assignment` | `group`, `ip`, `node` | 1 for the node currently holding each address. |
-| `fip_announcer_moves_total` | `group`, `reason` | Moves by reason (including `External`). |
+| `fip_announcer_moves_total` | `group`, `reason` | Moves by reason (including `External`). Every reason starts at 0 when a group is first reconciled. |
 | `fip_announcer_last_move_timestamp_seconds` | `group` | Unix time the IPs arrived on the current node. |
 | `fip_announcer_eligible_nodes` | `group` | Number of eligible nodes. |
 | `fip_announcer_group_degraded` | `group` | 1 when `Degraded`. |
@@ -185,4 +185,4 @@ Alert rules: `GroupDegraded`, `NoEligibleNode`, `HcloudAPIErrors`, `NoLeader`,
 | `UnknownGroup` | Warning | Service | The annotated group does not exist; the addresses the controller wrote are cleared. |
 | `NoAddress` | Warning | Service | The group has no address for one of the Service's IP families. |
 | `ForeignStatus` | Warning | Service | Takeover mode: the Service carries an address not listed in `fip-announcer.inocea.de/published`. |
-| `InvalidHealthCheck` | Warning | Service | Unparseable health-check annotation. |
+| `InvalidHealthCheck` | Warning | Service | Unparseable health-check annotation; the default check is used instead. |

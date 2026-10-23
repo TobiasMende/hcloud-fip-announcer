@@ -57,6 +57,7 @@ type FloatingIPRef struct {
 
 	// ipv6Address is the address taken from the /64, only used for IPv6.
 	// +kubebuilder:default="::1"
+	// +kubebuilder:validation:XValidation:rule="isIP(self) && ip(self).family() == 6",message="ipv6Address must be an IPv6 address"
 	// +optional
 	IPv6Address string `json:"ipv6Address,omitempty"`
 }

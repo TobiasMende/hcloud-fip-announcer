@@ -68,6 +68,9 @@ spec:
                     description: ipv6Address is the address taken from the /64, only
                       used for IPv6.
                     type: string
+                    x-kubernetes-validations:
+                    - message: ipv6Address must be an IPv6 address
+                      rule: isIP(self) && ip(self).family() == 6
                   name:
                     description: name is the Hetzner Floating IP name.
                     minLength: 1
@@ -83,6 +86,9 @@ spec:
                     description: ipv6Address is the address taken from the /64, only
                       used for IPv6.
                     type: string
+                    x-kubernetes-validations:
+                    - message: ipv6Address must be an IPv6 address
+                      rule: isIP(self) && ip(self).family() == 6
                   name:
                     description: name is the Hetzner Floating IP name.
                     minLength: 1
