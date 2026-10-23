@@ -54,7 +54,10 @@ var _ = Describe("FloatingIPGroup Controller", func() {
 						Name:      resourceName,
 						Namespace: resourceNamespace,
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: fipannouncerv1alpha1.FloatingIPGroupSpec{
+						Location: "fsn1",
+						IPv4:     &fipannouncerv1alpha1.FloatingIPRef{Name: "test-v4"},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

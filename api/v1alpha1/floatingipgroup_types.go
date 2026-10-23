@@ -21,38 +21,94 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+// DeletionPolicy decides what happens to Hetzner Floating IPs when the group is deleted.
+// +kubebuilder:validation:Enum=Retain;Delete
+type DeletionPolicy string
+
+const (
+	DeletionPolicyRetain DeletionPolicy = "Retain"
+	DeletionPolicyDelete DeletionPolicy = "Delete"
+)
+
+// MoveReason records why the Floating IPs are on their current node.
+// +kubebuilder:validation:Enum=Initial;NodeCordoned;ProbeFailed;EndpointsNotReady;NodeNotReady;ServerGone;External
+type MoveReason string
+
+const (
+	MoveReasonInitial           MoveReason = "Initial"
+	MoveReasonNodeCordoned      MoveReason = "NodeCordoned"
+	MoveReasonProbeFailed       MoveReason = "ProbeFailed"
+	MoveReasonEndpointsNotReady MoveReason = "EndpointsNotReady"
+	MoveReasonNodeNotReady      MoveReason = "NodeNotReady"
+	MoveReasonServerGone        MoveReason = "ServerGone"
+	MoveReasonExternal          MoveReason = "External"
+)
+
+const (
+	ConditionReady    = "Ready"
+	ConditionDegraded = "Degraded"
+)
+
+// FloatingIPRef names a Hetzner Floating IP that is adopted if it exists and created otherwise.
+type FloatingIPRef struct {
+	// name is the Hetzner Floating IP name.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// ipv6Address is the address taken from the /64, only used for IPv6.
+	// +kubebuilder:default="::1"
+	// +optional
+	IPv6Address string `json:"ipv6Address,omitempty"`
+}
 
 // FloatingIPGroupSpec defines the desired state of FloatingIPGroup
+// +kubebuilder:validation:XValidation:rule="has(self.ipv4) || has(self.ipv6)",message="at least one of ipv4 or ipv6 must be set"
 type FloatingIPGroupSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
+	// location is the Hetzner home location for created Floating IPs.
+	// +kubebuilder:validation:MinLength=1
+	Location string `json:"location"`
 
-	// foo is an example field of FloatingIPGroup. Edit floatingipgroup_types.go to remove/update
+	// ipv4 is the IPv4 Floating IP of the group.
 	// +optional
-	Foo *string `json:"foo,omitempty"`
+	IPv4 *FloatingIPRef `json:"ipv4,omitempty"`
+
+	// ipv6 is the IPv6 Floating IP of the group.
+	// +optional
+	IPv6 *FloatingIPRef `json:"ipv6,omitempty"`
+
+	// deletionPolicy decides whether the Floating IPs are kept or deleted with the group.
+	// +kubebuilder:default=Retain
+	// +optional
+	DeletionPolicy DeletionPolicy `json:"deletionPolicy,omitempty"`
+
+	// nodeSelector restricts eligible nodes, AND-combined with the member Services.
+	// +optional
+	NodeSelector *metav1.LabelSelector `json:"nodeSelector,omitempty"`
 }
 
 // FloatingIPGroupStatus defines the observed state of FloatingIPGroup.
 type FloatingIPGroupStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// ipv4 is the assigned IPv4 address.
+	// +optional
+	IPv4 string `json:"ipv4,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+	// ipv6 is the assigned IPv6 address taken from the /64.
+	// +optional
+	IPv6 string `json:"ipv6,omitempty"`
 
-	// conditions represent the current state of the FloatingIPGroup resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// node is the node currently holding the Floating IPs.
+	// +optional
+	Node string `json:"node,omitempty"`
+
+	// since is when the Floating IPs arrived on the node.
+	// +optional
+	Since *metav1.Time `json:"since,omitempty"`
+
+	// reason is why the Floating IPs are on the node.
+	// +optional
+	Reason MoveReason `json:"reason,omitempty"`
+
+	// conditions represent the current state of the FloatingIPGroup (Ready, Degraded).
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -62,6 +118,10 @@ type FloatingIPGroupStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="IPv4",type=string,JSONPath=`.status.ipv4`
+// +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.status.node`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // FloatingIPGroup is the Schema for the floatingipgroups API
 type FloatingIPGroup struct {

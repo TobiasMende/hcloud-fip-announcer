@@ -14,7 +14,20 @@ spec:
     singular: floatingipgroup
   scope: Cluster
   versions:
-  - name: v1alpha1
+  - additionalPrinterColumns:
+    - jsonPath: .status.ipv4
+      name: IPv4
+      type: string
+    - jsonPath: .status.node
+      name: Node
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
     schema:
       openAPIV3Schema:
         description: FloatingIPGroup is the Schema for the floatingipgroups API
@@ -39,25 +52,108 @@ spec:
           spec:
             description: spec defines the desired state of FloatingIPGroup
             properties:
-              foo:
-                description: foo is an example field of FloatingIPGroup. Edit floatingipgroup_types.go
-                  to remove/update
+              deletionPolicy:
+                default: Retain
+                description: deletionPolicy decides whether the Floating IPs are kept
+                  or deleted with the group.
+                enum:
+                - Retain
+                - Delete
                 type: string
+              ipv4:
+                description: ipv4 is the IPv4 Floating IP of the group.
+                properties:
+                  ipv6Address:
+                    default: ::1
+                    description: ipv6Address is the address taken from the /64, only
+                      used for IPv6.
+                    type: string
+                  name:
+                    description: name is the Hetzner Floating IP name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              ipv6:
+                description: ipv6 is the IPv6 Floating IP of the group.
+                properties:
+                  ipv6Address:
+                    default: ::1
+                    description: ipv6Address is the address taken from the /64, only
+                      used for IPv6.
+                    type: string
+                  name:
+                    description: name is the Hetzner Floating IP name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              location:
+                description: location is the Hetzner home location for created Floating
+                  IPs.
+                minLength: 1
+                type: string
+              nodeSelector:
+                description: nodeSelector restricts eligible nodes, AND-combined with
+                  the member Services.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - location
             type: object
+            x-kubernetes-validations:
+            - message: at least one of ipv4 or ipv6 must be set
+              rule: has(self.ipv4) || has(self.ipv6)
           status:
             description: status defines the observed state of FloatingIPGroup
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the FloatingIPGroup resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: conditions represent the current state of the FloatingIPGroup
+                  (Ready, Degraded).
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -116,6 +212,30 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              ipv4:
+                description: ipv4 is the assigned IPv4 address.
+                type: string
+              ipv6:
+                description: ipv6 is the assigned IPv6 address taken from the /64.
+                type: string
+              node:
+                description: node is the node currently holding the Floating IPs.
+                type: string
+              reason:
+                description: reason is why the Floating IPs are on the node.
+                enum:
+                - Initial
+                - NodeCordoned
+                - ProbeFailed
+                - EndpointsNotReady
+                - NodeNotReady
+                - ServerGone
+                - External
+                type: string
+              since:
+                description: since is when the Floating IPs arrived on the node.
+                format: date-time
+                type: string
             type: object
         required:
         - spec
