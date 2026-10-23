@@ -240,6 +240,10 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: name must be at most 63 characters; it becomes a Hetzner label
+            value
+          rule: size(self.metadata.name) <= 63
     served: true
     storage: true
     subresources:
