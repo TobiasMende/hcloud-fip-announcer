@@ -90,8 +90,6 @@ More in [examples/](examples/).
 - IPv6 with Cilium is untested; NAT46/64 support is planned.
 - No `hostNetwork` mode yet (a Floating IP as an address on the node
   interface, needed for e.g. TURN relay ports); a per-node agent is planned.
-- Service status addresses are not released when the address of a group
-  changes; the old IP stays until the annotation is removed (conservative).
 - A leader change in the middle of a move can briefly re-align split Floating
   IPs of a group before the move completes.
 

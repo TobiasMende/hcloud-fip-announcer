@@ -38,7 +38,8 @@ Cluster-wide:
 
 | Resources | Verbs |
 |---|---|
-| `services`, `nodes` | get, list, watch |
+| `services` | get, list, watch, patch |
+| `nodes` | get, list, watch |
 | `endpointslices` (discovery.k8s.io) | get, list, watch |
 | `services/status` | get, patch |
 | `events` | create, patch |
@@ -50,8 +51,11 @@ In the release namespace: `leases` (coordination.k8s.io) get, list, watch,
 create, update, patch for leader election.
 
 The controller can patch the status of every Service of its class (and, in
-takeover mode, of every annotated Service without a class). It cannot modify
-Service specs.
+takeover mode, of every annotated Service without a class). `patch` on
+`services` exists for one annotation, `fip-announcer.inocea.de/published`,
+which records the addresses it wrote; RBAC cannot narrow a patch to metadata,
+so the permission technically covers Service specs too. The controller never
+changes a spec.
 
 ## Network policy
 

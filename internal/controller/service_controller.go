@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,6 +36,8 @@ import (
 
 const (
 	serviceGroupAnnotation = "fip-announcer.inocea.de/group"
+	// publishedAnnotation lists the ingress addresses this controller wrote.
+	publishedAnnotation = "fip-announcer.inocea.de/published"
 
 	// ServiceGroupIndex indexes Services by the group named in their annotation.
 	ServiceGroupIndex = "group"
@@ -48,7 +51,7 @@ type ServiceReconciler struct {
 	Recorder record.EventRecorder
 }
 
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups="",resources=services/status,verbs=get;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=fip-announcer.inocea.de,resources=floatingipgroups,verbs=get;list;watch
@@ -64,27 +67,31 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	groupName := svc.Annotations[serviceGroupAnnotation]
 	if groupName == "" {
-		return ctrl.Result{}, r.releaseOwned(ctx, svc)
+		return ctrl.Result{}, releaseService(ctx, r.Client, r.Class, svc)
 	}
 
 	group := &fipannouncerv1alpha1.FloatingIPGroup{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Name: groupName}, group); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Recorder.Eventf(svc, corev1.EventTypeWarning, "UnknownGroup", "FloatingIPGroup %q does not exist", groupName)
-			return ctrl.Result{}, nil
+			return ctrl.Result{}, releaseService(ctx, r.Client, r.Class, svc)
 		}
 		return ctrl.Result{}, err
 	}
+	if !group.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, releaseService(ctx, r.Client, r.Class, svc)
+	}
 
 	want := r.desiredIngress(svc, group)
-	if r.Class == "" && hasForeignIngress(svc, groupAddresses(group)) {
+	if r.Class == "" && hasForeignIngress(svc, publishedAddresses(svc)) {
 		r.Recorder.Eventf(svc, corev1.EventTypeWarning, "ForeignStatus",
 			"Service already carries a load balancer address not written by this controller; taking it over. Another default LoadBalancer implementation may be running")
 	}
-	if len(want) == 0 {
-		return ctrl.Result{}, r.releaseOwned(ctx, svc)
+	addrs := make([]string, 0, len(want))
+	for _, ing := range want {
+		addrs = append(addrs, ing.IP)
 	}
-	return ctrl.Result{}, r.writeIngress(ctx, svc, want)
+	return ctrl.Result{}, writeIngress(ctx, r.Client, svc, want, addrs)
 }
 
 func (r *ServiceReconciler) handles(svc *corev1.Service) bool {
@@ -125,43 +132,75 @@ func (r *ServiceReconciler) desiredIngress(svc *corev1.Service, group *fipannoun
 	return out
 }
 
-// releaseOwned clears the status of a Service whose annotation was removed,
-// but only when every address in it belongs to some group.
-func (r *ServiceReconciler) releaseOwned(ctx context.Context, svc *corev1.Service) error {
-	if len(svc.Status.LoadBalancer.Ingress) == 0 {
-		return nil
+// releaseService removes the addresses this controller wrote. Only this
+// controller writes Services of a named class, so their ingress is cleared;
+// with class none only the addresses recorded as published are removed.
+func releaseService(ctx context.Context, c client.Client, class string, svc *corev1.Service) error {
+	var keep []corev1.LoadBalancerIngress
+	if class == "" {
+		published := publishedAddresses(svc)
+		for _, ing := range svc.Status.LoadBalancer.Ingress {
+			if !slices.Contains(published, ing.IP) {
+				keep = append(keep, ing)
+			}
+		}
 	}
-	groups := &fipannouncerv1alpha1.FloatingIPGroupList{}
-	if err := r.Client.List(ctx, groups); err != nil {
-		return err
-	}
-	var owned []string
-	for i := range groups.Items {
-		owned = append(owned, groupAddresses(&groups.Items[i])...)
-	}
-	if hasForeignIngress(svc, owned) {
-		return nil
-	}
-	return r.writeIngress(ctx, svc, nil)
+	return writeIngress(ctx, c, svc, keep, nil)
 }
 
-func (r *ServiceReconciler) writeIngress(ctx context.Context, svc *corev1.Service, want []corev1.LoadBalancerIngress) error {
-	if ingressEqual(svc.Status.LoadBalancer.Ingress, want) {
+// writeIngress sets the ingress and records addrs as the addresses this
+// controller published. The annotation is widened before the status write
+// and narrowed after it, so it never misses an address that is in status.
+func writeIngress(ctx context.Context, c client.Client, svc *corev1.Service, want []corev1.LoadBalancerIngress,
+	addrs []string) error {
+	if !ingressEqual(svc.Status.LoadBalancer.Ingress, want) {
+		if err := setPublished(ctx, c, svc, union(publishedAddresses(svc), addrs)); err != nil {
+			return err
+		}
+		patch := client.MergeFrom(svc.DeepCopy())
+		svc.Status.LoadBalancer.Ingress = want
+		if err := c.Status().Patch(ctx, svc, patch); err != nil {
+			return fmt.Errorf("patch status of %s/%s: %w", svc.Namespace, svc.Name, err)
+		}
+	}
+	return setPublished(ctx, c, svc, addrs)
+}
+
+func setPublished(ctx context.Context, c client.Client, svc *corev1.Service, addrs []string) error {
+	value := strings.Join(addrs, ",")
+	if svc.Annotations[publishedAnnotation] == value {
 		return nil
 	}
 	patch := client.MergeFrom(svc.DeepCopy())
-	svc.Status.LoadBalancer.Ingress = want
-	if err := r.Client.Status().Patch(ctx, svc, patch); err != nil {
-		return fmt.Errorf("patch status of %s/%s: %w", svc.Namespace, svc.Name, err)
+	if value == "" {
+		delete(svc.Annotations, publishedAnnotation)
+	} else {
+		if svc.Annotations == nil {
+			svc.Annotations = map[string]string{}
+		}
+		svc.Annotations[publishedAnnotation] = value
+	}
+	if err := c.Patch(ctx, svc, patch); err != nil {
+		return fmt.Errorf("annotate %s/%s: %w", svc.Namespace, svc.Name, err)
 	}
 	return nil
 }
 
-func groupAddresses(group *fipannouncerv1alpha1.FloatingIPGroup) []string {
+func publishedAddresses(svc *corev1.Service) []string {
 	var out []string
-	for _, a := range []string{group.Status.IPv4, group.Status.IPv6} {
-		if a != "" {
+	for a := range strings.SplitSeq(svc.Annotations[publishedAnnotation], ",") {
+		if a = strings.TrimSpace(a); a != "" {
 			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func union(a, b []string) []string {
+	out := slices.Clone(a)
+	for _, s := range b {
+		if !slices.Contains(out, s) {
+			out = append(out, s)
 		}
 	}
 	return out

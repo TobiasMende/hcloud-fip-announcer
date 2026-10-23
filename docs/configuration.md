@@ -50,7 +50,7 @@ A Service is a member when it is `type: LoadBalancer`, matches the controller's
 
 | Annotation | Description |
 |---|---|
-| `fip-announcer.inocea.de/group` | Name of the `FloatingIPGroup`. Required. Without it the controller clears the status address it wrote earlier (only if every address in the status belongs to some group). |
+| `fip-announcer.inocea.de/group` | Name of the `FloatingIPGroup`. Required. When it is removed, or the group does not exist or is being deleted, the controller clears the addresses it wrote (see below). |
 | `fip-announcer.inocea.de/health-check` | `http://:<port><path>` (HTTP GET, 2xx expected) or `tcp://:<port>`. The host must be empty; probes go to the pod IPs of the ready endpoints on each node. Absent: TCP connect to the first TCP endpoint port; UDP-only Services are decided by endpoint readiness. An invalid value emits an `InvalidHealthCheck` event. |
 
 `spec.loadBalancerClass` must equal `--load-balancer-class`
@@ -68,6 +68,19 @@ when a Service already carries an address it did not write.
 The controller writes one `status.loadBalancer.ingress` entry per entry of the
 Service's `ipFamilies` (IPv4 if unset). A family the group has no address for
 emits a `NoAddress` warning.
+
+Together with the status, the controller records the addresses it wrote in the
+annotation `fip-announcer.inocea.de/published` (comma-separated; managed by the
+controller, do not edit). It decides what to release from it:
+
+- When the group annotation is removed, or the group does not exist or is being
+  deleted, the controller clears the ingress of Services of its class; in
+  takeover mode it removes only the addresses listed as published and keeps
+  anything another implementation wrote.
+- A group with `deletionPolicy: Delete` releases its member Services before it
+  deletes the Floating IPs.
+- `ForeignStatus` fires when the ingress contains an address that is not listed
+  as published.
 
 Use `externalTrafficPolicy: Local` to preserve client IPs; the group only
 moves to nodes with a ready local endpoint.
@@ -169,7 +182,7 @@ Alert rules: `GroupDegraded`, `NoEligibleNode`, `HcloudAPIErrors`, `NoLeader`,
 | `Deleted` | Normal | group | Deleted with `deletionPolicy: Delete`. |
 | `NotDeleted` | Warning | group | IP not labelled for this group; left alone. |
 | `NoEligibleNode`, `Refused`, `External` | Warning | group | The group became `Degraded` for that reason. |
-| `UnknownGroup` | Warning | Service | The annotated group does not exist. |
+| `UnknownGroup` | Warning | Service | The annotated group does not exist; the addresses the controller wrote are cleared. |
 | `NoAddress` | Warning | Service | The group has no address for one of the Service's IP families. |
-| `ForeignStatus` | Warning | Service | Takeover mode: the Service already had a foreign address. |
+| `ForeignStatus` | Warning | Service | Takeover mode: the Service carries an address not listed in `fip-announcer.inocea.de/published`. |
 | `InvalidHealthCheck` | Warning | Service | Unparseable health-check annotation. |

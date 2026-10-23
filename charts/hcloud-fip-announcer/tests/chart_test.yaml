@@ -100,7 +100,10 @@ tests:
           path: rules
           value:
             - apiGroups: [""]
-              resources: [services, nodes]
+              resources: [services]
+              verbs: [get, list, watch, patch]
+            - apiGroups: [""]
+              resources: [nodes]
               verbs: [get, list, watch]
             - apiGroups: [discovery.k8s.io]
               resources: [endpointslices]

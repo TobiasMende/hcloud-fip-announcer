@@ -123,9 +123,6 @@ losing the node holding the IPs does not usually cost a leader election as well.
 
 - IPv6 via Cilium is untested; NAT46/64 is planned.
 - No `hostNetwork` mode yet; a per-node agent is planned.
-- When a group's address changes, member Services keep the old address in
-  their status until the annotation is removed (conservative: the controller
-  only clears addresses it can prove belong to some group).
 - A leader change in the middle of a move briefly re-aligns split Floating IPs
   from `status.node`; an interrupted initial assignment is then recorded as
   `External`.

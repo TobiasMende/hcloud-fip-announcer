@@ -362,6 +362,25 @@ func (e *env) moveExternally(family string, suffix string) {
 	e.fake.AddFloatingIP(*f)
 }
 
+// publish writes the group's addresses into the member Service like the
+// Service reconciler does.
+func (e *env) publish() {
+	GinkgoHelper()
+	sr := &ServiceReconciler{Client: k8sClient, Class: testClass, Recorder: e.recorder}
+	_, err := sr.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(e.svc)})
+	Expect(err).NotTo(HaveOccurred())
+	got := &corev1.Service{}
+	Expect(k8sClient.Get(context.Background(), client.ObjectKeyFromObject(e.svc), got)).To(Succeed())
+	waitCached(got)
+}
+
+func (e *env) ingress() []corev1.LoadBalancerIngress {
+	GinkgoHelper()
+	got := &corev1.Service{}
+	Expect(k8sClient.Get(context.Background(), client.ObjectKeyFromObject(e.svc), got)).To(Succeed())
+	return got.Status.LoadBalancer.Ingress
+}
+
 func (e *env) svcKey() string { return testNamespace + "/" + e.svc.Name }
 
 func (e *env) events() []string {
@@ -720,6 +739,30 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		Expect(e.fake.CallCount(hetzner.MethodDelete)).To(Equal(2))
 		Expect(e.fake.FloatingIPNamed(e.fipName(familyIPv4))).To(BeNil())
 		Expect(e.fake.FloatingIPNamed(e.fipName(familyIPv6))).To(BeNil())
+	})
+
+	It("TestDeletionReleasesMemberServices", func() {
+		for _, policy := range []v1alpha1.DeletionPolicy{v1alpha1.DeletionPolicyRetain, v1alpha1.DeletionPolicyDelete} {
+			By(string(policy))
+			e := newEnv([]string{"a"}, "a")
+			e.createGroupWith(policy, familyIPv4)
+			e.mustReconcile()
+			e.publish()
+			Expect(e.ingress()).To(HaveLen(1))
+			Expect(k8sClient.Delete(context.Background(), e.get())).To(Succeed())
+
+			if policy == v1alpha1.DeletionPolicyDelete {
+				e.fake.SetErr(hetzner.MethodDelete, errors.New("boom"))
+				_, err := e.reconcile()
+				Expect(err).To(HaveOccurred())
+				Expect(e.ingress()).To(BeEmpty(), "released before the Floating IP is deleted")
+				Expect(e.fake.FloatingIPNamed(e.fipName(familyIPv4))).NotTo(BeNil())
+				e.fake.SetErr(hetzner.MethodDelete, nil)
+			}
+			e.mustReconcile()
+			Expect(e.gone()).To(BeTrue())
+			Expect(e.ingress()).To(BeEmpty())
+		}
 	})
 
 	It("TestPollingRespectsBudget", func() {

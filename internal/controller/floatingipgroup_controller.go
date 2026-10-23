@@ -120,7 +120,8 @@ type moveInfo struct {
 // +kubebuilder:rbac:groups=fip-announcer.inocea.de,resources=floatingipgroups/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=fip-announcer.inocea.de,resources=floatingipgroups/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups="",resources=services/status,verbs=get;patch
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
@@ -367,6 +368,9 @@ func (r *FloatingIPGroupReconciler) finalize(ctx context.Context, group *v1alpha
 	if !controllerutil.ContainsFinalizer(group, finalizerName) {
 		return nil
 	}
+	if err := r.releaseMembers(ctx, group.Name); err != nil {
+		return err
+	}
 	if group.Spec.DeletionPolicy == v1alpha1.DeletionPolicyDelete {
 		for _, g := range requestedFIPs(group) {
 			f, err := r.Hetzner.FloatingIPByName(ctx, g.ref.Name)
@@ -390,6 +394,23 @@ func (r *FloatingIPGroupReconciler) finalize(ctx context.Context, group *v1alpha
 	r.forget(group.Name)
 	controllerutil.RemoveFinalizer(group, finalizerName)
 	return client.IgnoreNotFound(r.Update(ctx, group))
+}
+
+// releaseMembers removes the group's addresses from its member Services, so
+// none of them advertises a Floating IP that is about to be released.
+func (r *FloatingIPGroupReconciler) releaseMembers(ctx context.Context, group string) error {
+	svcs := &corev1.ServiceList{}
+	if err := r.List(ctx, svcs, client.MatchingFields{ServiceGroupIndex: group}); err != nil {
+		return err
+	}
+	for i := range svcs.Items {
+		if svc := &svcs.Items[i]; handlesClass(svc, r.Class) {
+			if err := releaseService(ctx, r.Client, r.Class, svc); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (r *FloatingIPGroupReconciler) forget(group string) {
