@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.1.0...v0.2.0) (2026-10-23)
+
+
+### Features
+
+* prefer nodes in the Floating IP's home location ([1cb0430](https://github.com/TobiasMende/hcloud-fip-announcer/commit/1cb043068d6e97f0aaac13969ec38508ed824b23))
+* prefer nodes in the Floating IP's home location ([19de838](https://github.com/TobiasMende/hcloud-fip-announcer/commit/19de838949de26ee6d5d130541a468f4f759dc4d)), closes [#15](https://github.com/TobiasMende/hcloud-fip-announcer/issues/15)
+
+
+### Bug Fixes
+
+* **ci:** main guard without git fetch ([6d9ad70](https://github.com/TobiasMende/hcloud-fip-announcer/commit/6d9ad702d194e1dc1bc76e792a771ed6d548e361))
+* **ci:** main guard without git fetch ([b476b7b](https://github.com/TobiasMende/hcloud-fip-announcer/commit/b476b7b3d391a1df7c1b3abaa7c849a125d6e6aa))
+* **deps:** update kubernetes modules ([0d433c4](https://github.com/TobiasMende/hcloud-fip-announcer/commit/0d433c4f7137f8f49e51f04d26a06b5be14dea32))
+* **deps:** update kubernetes modules ([e735247](https://github.com/TobiasMende/hcloud-fip-announcer/commit/e735247f30bbc80c1545b3becfd0e15b3cf62f8c))
+
 ## 0.1.0 (2026-10-23)
 
 
