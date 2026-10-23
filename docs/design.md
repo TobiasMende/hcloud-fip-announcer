@@ -101,9 +101,18 @@ status:
 
 ### Service membership (loadBalancerClass)
 
-- A Service opts in with `spec.loadBalancerClass: <api-group>/floating-ip`
-  (exact string follows the API group, see "Left to the builder") and an
-  annotation naming its group (`…/group: ingress`).
+- A Service opts in with the controller's `loadBalancerClass` and an
+  annotation naming its group (`…/group: ingress`). The class is configurable
+  (Helm value); the default is `<api-group>/floating-ip` (exact string follows
+  the API group, see "Left to the builder").
+- The class may also be configured as *none*: the controller then handles
+  annotated Services **without** a `loadBalancerClass`, like a cluster's
+  default LoadBalancer implementation. This lets an existing Service be taken
+  over in place. Only safe when no other default implementation runs (Hetzner
+  cloud controller manager with its LB controller enabled, Cilium LB-IPAM
+  with a default pool, MetalLB); the docs say so, and the controller emits a
+  warning event when such a Service already carries a status address it did
+  not write.
 - For these Services the controller writes the group's addresses (IPv4 and/or
   IPv6, per the Service's `ipFamilies`) into `status.loadBalancer.ingress`.
   Hetzner's cloud controller manager and Cilium LB-IPAM ignore Services with a
@@ -111,9 +120,10 @@ status:
   IPs from the Service status (Cilium kube-proxy replacement, kube-proxy) then
   deliver the traffic on whichever node receives it.
 - Several Services may share one group (TCP and UDP, different ports).
-- `loadBalancerClass` is immutable on existing Services: adopting an
-  existing workload means creating a new Service of the class and deleting the
-  old one after cutover.
+- `loadBalancerClass` is immutable on existing Services: with a named class,
+  adopting an existing workload means creating a new Service of the class and
+  deleting the old one after cutover; with class *none*, the existing Service
+  is taken over in place (its address changes at once).
 
 ### Health checks
 
