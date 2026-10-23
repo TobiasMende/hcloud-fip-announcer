@@ -27,7 +27,7 @@ func node(name string, mut ...func(*corev1.Node)) corev1.Node {
 	return n
 }
 
-func svc(ns, name string) corev1.Service {
+func svc(name string) corev1.Service {
 	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
 }
 
@@ -56,7 +56,7 @@ func base(nodes ...corev1.Node) Input {
 }
 
 func withService(in Input, nodes map[string]bool) Input {
-	in.Services = []corev1.Service{svc("ns", "web")}
+	in.Services = []corev1.Service{svc("web")}
 	in.Slices = []discoveryv1.EndpointSlice{slice("ns", "web", nodes)}
 	return in
 }
@@ -102,7 +102,7 @@ func TestSelectorMismatch(t *testing.T) {
 
 func TestNeedsReadyEndpointForEveryService(t *testing.T) {
 	in := base(node("a"), node("b"))
-	in.Services = []corev1.Service{svc("ns", "web"), svc("ns", "dns")}
+	in.Services = []corev1.Service{svc("web"), svc("dns")}
 	in.Slices = []discoveryv1.EndpointSlice{
 		slice("ns", "web", map[string]bool{"a": true}),
 		slice("ns", "dns", map[string]bool{"b": true}),
@@ -178,7 +178,7 @@ func TestNotReadyEndpointIneligible(t *testing.T) {
 
 func TestEndpointWithoutNodeNameIgnored(t *testing.T) {
 	in := base(node("a"))
-	in.Services = []corev1.Service{svc("ns", "web")}
+	in.Services = []corev1.Service{svc("web")}
 	s := slice("ns", "web", nil)
 	s.Endpoints = []discoveryv1.Endpoint{{Conditions: discoveryv1.EndpointConditions{Ready: new(true)}}}
 	in.Slices = []discoveryv1.EndpointSlice{s}
@@ -187,7 +187,7 @@ func TestEndpointWithoutNodeNameIgnored(t *testing.T) {
 
 func TestSliceInOtherNamespaceIgnored(t *testing.T) {
 	in := base(node("a"))
-	in.Services = []corev1.Service{svc("ns", "web")}
+	in.Services = []corev1.Service{svc("web")}
 	in.Slices = []discoveryv1.EndpointSlice{slice("other", "web", map[string]bool{"a": true})}
 	assertReason(t, Eligible(in), "a", EndpointsNotReady)
 }
