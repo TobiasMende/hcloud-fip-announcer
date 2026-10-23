@@ -2,8 +2,8 @@ apiVersion: v2
 name: hcloud-fip-announcer
 description: Keeps Hetzner Floating IPs on healthy nodes and publishes them in LoadBalancer Service status.
 type: application
-version: 0.1.0 # x-release-please-version
-appVersion: "0.1.0" # x-release-please-version
+version: 0.2.0 # x-release-please-version
+appVersion: "0.2.0" # x-release-please-version
 home: https://github.com/TobiasMende/hcloud-fip-announcer
 sources:
   - https://github.com/TobiasMende/hcloud-fip-announcer
