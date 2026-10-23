@@ -324,3 +324,30 @@ func TestDefaultTCPCheckFromServicePort(t *testing.T) {
 		t.Fatal("invalid annotation must error")
 	}
 }
+
+func TestRedirectCountsAsFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok" {
+			return
+		}
+		http.Redirect(w, r, "/ok", http.StatusFound)
+	}))
+	defer srv.Close()
+	p := startProber(t)
+	p.SetTargets("g", []Target{httpTarget("n1", portOf(t, srv), loopback)})
+	waitResult(t, p, key("n1"), false)
+}
+
+func TestSetTargetsKeepsFailureCounter(t *testing.T) {
+	var p *Prober
+	var port atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		p.SetTargets("g", []Target{httpTarget("n1", int(port.Load()), loopback)})
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	port.Store(int32(portOf(t, srv)))
+	p = startProber(t)
+	p.SetTargets("g", []Target{httpTarget("n1", int(port.Load()), loopback)})
+	waitResult(t, p, key("n1"), false)
+}

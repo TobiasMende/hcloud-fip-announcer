@@ -302,7 +302,10 @@ func (p *Prober) probeOne(ctx context.Context, ip net.IP, c Check) bool {
 	if err != nil {
 		return false
 	}
-	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	client := &http.Client{
+		Transport:     &http.Transport{DisableKeepAlives: true},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {

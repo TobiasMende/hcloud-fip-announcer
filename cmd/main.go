@@ -104,6 +104,15 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	if probeInterval <= 0 {
+		setupLog.Error(nil, "--probe-interval must be greater than 0", "value", probeInterval)
+		os.Exit(1)
+	}
+	if probeFailureThreshold < 1 {
+		setupLog.Error(nil, "--probe-failure-threshold must be at least 1", "value", probeFailureThreshold)
+		os.Exit(1)
+	}
+
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
 	// prevent from being vulnerable to the HTTP/2 Stream Cancellation and
