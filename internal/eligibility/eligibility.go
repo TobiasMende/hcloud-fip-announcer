@@ -30,6 +30,8 @@ type NodeKey struct {
 	Service string
 }
 
+// Input is the snapshot Eligible evaluates. ServerOf and ZoneOf must be non-nil.
+// A selector that matches a control-plane node (including match-all) admits it.
 type Input struct {
 	Nodes    []corev1.Node
 	Services []corev1.Service

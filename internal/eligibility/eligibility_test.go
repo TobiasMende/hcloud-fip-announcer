@@ -170,3 +170,36 @@ func eligibleNames(m map[string]Reason) []string {
 	}
 	return out
 }
+
+func TestNotReadyEndpointIneligible(t *testing.T) {
+	in := withService(base(node("a")), map[string]bool{"a": false})
+	assertReason(t, Eligible(in), "a", EndpointsNotReady)
+}
+
+func TestEndpointWithoutNodeNameIgnored(t *testing.T) {
+	in := base(node("a"))
+	in.Services = []corev1.Service{svc("ns", "web")}
+	s := slice("ns", "web", nil)
+	s.Endpoints = []discoveryv1.Endpoint{{Conditions: discoveryv1.EndpointConditions{Ready: new(true)}}}
+	in.Slices = []discoveryv1.EndpointSlice{s}
+	assertReason(t, Eligible(in), "a", EndpointsNotReady)
+}
+
+func TestSliceInOtherNamespaceIgnored(t *testing.T) {
+	in := base(node("a"))
+	in.Services = []corev1.Service{svc("ns", "web")}
+	in.Slices = []discoveryv1.EndpointSlice{slice("other", "web", map[string]bool{"a": true})}
+	assertReason(t, Eligible(in), "a", EndpointsNotReady)
+}
+
+func TestSliceWithoutServiceLabelIgnored(t *testing.T) {
+	in := withService(base(node("a")), map[string]bool{"a": true})
+	in.Slices[0].Labels = nil
+	assertReason(t, Eligible(in), "a", EndpointsNotReady)
+}
+
+func TestMissingProbeResultIsNotFailing(t *testing.T) {
+	in := withService(base(node("a")), map[string]bool{"a": true})
+	in.Probes = map[NodeKey]bool{{Node: "b", Service: "ns/web"}: false}
+	assertReason(t, Eligible(in), "a", "")
+}
