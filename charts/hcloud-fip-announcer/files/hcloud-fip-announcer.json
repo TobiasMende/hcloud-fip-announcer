@@ -89,7 +89,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(leader_election_master_status)",
+          "expr": "sum(leader_election_master_status{name=\"hcloud-fip-announcer\"})",
           "refId": "A"
         }
       ],

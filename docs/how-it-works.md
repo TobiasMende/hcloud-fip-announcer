@@ -117,8 +117,9 @@ group are deleted.
 
 ## Leader election
 
-Replicas elect a leader through a Lease (6 s lease, 4 s renew, 1 s retry by
-default). Only the leader reconciles and probes. The pods avoid sharing a node
+Replicas elect a leader through the Lease `hcloud-fip-announcer` in the
+release namespace (6 s lease, 4 s renew, 1 s retry by default). A leader that
+shuts down releases the Lease, so a rolling update hands over at once. Only the leader reconciles and probes. The pods avoid sharing a node
 (soft anti-affinity), and the leader's node loses ties in placement, so
 losing the node holding the IPs does not usually cost a leader election as well.
 

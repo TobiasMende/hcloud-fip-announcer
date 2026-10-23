@@ -26,7 +26,7 @@ groups:
           summary: "Hetzner API requests are failing"
           description: "The controller has seen non-2xx (excluding 404) Hetzner API responses for 10 minutes. Retried attempts count, so a transient error burst also fires this."
       - alert: NoLeader
-        expr: sum(leader_election_master_status) < 1 or absent(leader_election_master_status)
+        expr: sum(leader_election_master_status{name="hcloud-fip-announcer"}) < 1 or absent(leader_election_master_status{name="hcloud-fip-announcer"})
         for: 1m
         labels:
           severity: critical

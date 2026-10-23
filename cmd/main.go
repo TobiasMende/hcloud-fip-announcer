@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"regexp"
 	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
@@ -43,10 +44,20 @@ import (
 	// +kubebuilder:scaffold:imports
 )
 
+const leaderElectionID = "hcloud-fip-announcer"
+
 var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
+
+	// clusterIDPattern is a Hetzner label value: up to 63 characters,
+	// alphanumeric at both ends, '-', '_' or '.' in between.
+	clusterIDPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]{0,61}[a-zA-Z0-9])?$`)
 )
+
+func validClusterID(id string) bool {
+	return clusterIDPattern.MatchString(id)
+}
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -110,9 +121,7 @@ func main() {
 		"How long Hetzner reads are cached; Floating IPs are also re-read right before every move.")
 	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
 		"How many FloatingIPGroups are reconciled in parallel.")
-	opts := zap.Options{
-		Development: true,
-	}
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
@@ -128,6 +137,11 @@ func main() {
 	}
 	if clusterID == "" {
 		setupLog.Error(nil, "--cluster-id is required")
+		os.Exit(1)
+	}
+	if !validClusterID(clusterID) {
+		setupLog.Error(nil, "--cluster-id must be a Hetzner label value: at most 63 characters, "+
+			"alphanumeric at start and end, '-', '_' or '.' in between", "value", clusterID)
 		os.Exit(1)
 	}
 	if antiFlap < 0 {
@@ -220,21 +234,13 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "22cb396b.inocea.de",
+		LeaderElectionID:       leaderElectionID,
 		LeaseDuration:          &leaseDuration,
 		RenewDeadline:          &renewDeadline,
 		RetryPeriod:            &retryPeriod,
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		// The process exits right after the manager stops, so stepping down
+		// on shutdown is safe and hands over without waiting for the lease.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		setupLog.Error(err, "Failed to start manager")

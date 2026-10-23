@@ -106,7 +106,9 @@ moves to nodes with a ready local endpoint.
 | `--health-probe-bind-address` | `:8081` | Serves `/healthz` and `/readyz`. |
 | `--enable-http2` | `false` | Enable HTTP/2 on the metrics and webhook servers. |
 | `--webhook-port`, `--webhook-cert-path`, `--webhook-cert-name`, `--webhook-cert-key` | `9443`, `""`, `tls.crt`, `tls.key` | Webhook server options (no webhooks are used at present). |
-| zap flags (`--zap-log-level`, `--zap-devel`, ...) | | Logging. |
+| `--zap-log-level` | `info` | Log level: `debug`, `info`, `error`, or an integer for more verbosity. |
+| `--zap-encoder` | `json` | Log format: `json` or `console`. |
+| `--zap-devel`, `--zap-stacktrace-level`, `--zap-time-encoding` | `false`, `error`, `rfc3339` | Further zap options; `--zap-devel` switches to console output at debug level. |
 
 Environment: `HCLOUD_TOKEN` (required), `NODE_NAME` (the pod's node; the chart
 sets it; used to prefer other nodes than the leader's on placement ties).
@@ -168,7 +170,11 @@ Chart: `oci://ghcr.io/tobiasmende/charts/hcloud-fip-announcer`.
 | `fip_announcer_hcloud_requests_total` | `method`, `code` | Hetzner API requests (every attempt, retries included). |
 | `fip_announcer_hcloud_request_duration_seconds` | | Hetzner API latency histogram. |
 
-Leadership is visible as `leader_election_master_status` (controller-runtime);
+Logs are structured JSON; every move is one line with `group`, `ips`, `from`,
+`to` and `reason`. Set `controller.extraArgs` to change the log options.
+
+Leadership is visible as `leader_election_master_status{name="hcloud-fip-announcer"}`
+(controller-runtime; `name` is the Lease name);
 the usual `controller_runtime_*` and `workqueue_*` metrics are served too.
 Alert rules: `GroupDegraded`, `NoEligibleNode`, `HcloudAPIErrors`, `NoLeader`,
 `FrequentMoves`.
