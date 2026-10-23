@@ -1,0 +1,9 @@
+apiVersion: fip-announcer.inocea.de/v1alpha1
+kind: FloatingIPGroup
+metadata:
+  labels:
+    app.kubernetes.io/name: hcloud-fip-announcer
+    app.kubernetes.io/managed-by: kustomize
+  name: floatingipgroup-sample
+spec:
+  # TODO(user): Add fields here
