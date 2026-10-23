@@ -281,10 +281,16 @@ for another cluster or group. Adopting an unlabelled FIP by name labels it.
 
 ## Left to the builder
 
-API group, `loadBalancerClass` string and annotation prefix (one consistent
-domain), exact default timings within the stated goal, CRD field names,
+Exact default timings within the stated goal, CRD field names,
 metric names, Helm values layout, how the leader avoids the holder node, the
 probing implementation (goroutine per node/group, connection reuse).
+
+## Naming (decided)
+
+API group `fip-announcer.inocea.de` (`v1alpha1`, kind `FloatingIPGroup`),
+default `loadBalancerClass` `fip-announcer.inocea.de/floating-ip`, annotations
+and Hetzner labels under the prefix `fip-announcer.inocea.de/` (`group`,
+`health-check`, `cluster-id`), finalizer `fip-announcer.inocea.de/finalizer`.
 
 ## Decisions made while writing (check these)
 
