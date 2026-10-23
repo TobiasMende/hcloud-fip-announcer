@@ -32,3 +32,33 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.1
+
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version v1.0.3 --verify=false
+
+      - name: Chart assets are in sync
+        run: |
+          make chart-sync
+          git diff --exit-code -- charts/
+
+      - name: Lint
+        run: helm lint charts/hcloud-fip-announcer --set clusterId=ci --set hcloud.token=ci
+
+      - name: Unit tests
+        run: helm unittest charts/hcloud-fip-announcer

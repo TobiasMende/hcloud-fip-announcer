@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-fip
+  namespace: traefik
+  annotations:
+    fip-announcer.inocea.de/group: ingress
+    fip-announcer.inocea.de/health-check: http://:8080/ping
+spec:
+  type: LoadBalancer
+  loadBalancerClass: fip-announcer.inocea.de/floating-ip
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/name: traefik
+  ports:
+    - {name: web, port: 80, targetPort: web, protocol: TCP}
+    - {name: websecure, port: 443, targetPort: websecure, protocol: TCP}
+    - {name: websecure-udp, port: 443, targetPort: websecure, protocol: UDP}

@@ -1,0 +1,40 @@
+suite: monitoring
+templates:
+  - servicemonitor.yaml
+  - prometheusrule.yaml
+  - service.yaml
+set:
+  clusterId: test
+  hcloud.token: secret
+tests:
+  - it: nothing by default
+    template: servicemonitor.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: ServiceMonitor when enabled
+    template: servicemonitor.yaml
+    set:
+      serviceMonitor.enabled: true
+    asserts:
+      - isKind:
+          of: ServiceMonitor
+      - equal:
+          path: spec.endpoints[0].port
+          value: metrics
+  - it: PrometheusRule when enabled
+    template: prometheusrule.yaml
+    set:
+      prometheusRule.enabled: true
+    asserts:
+      - isKind:
+          of: PrometheusRule
+      - equal:
+          path: spec.groups[0].name
+          value: hcloud-fip-announcer
+  - it: metrics port is named
+    template: service.yaml
+    asserts:
+      - equal:
+          path: spec.ports[0].name
+          value: metrics

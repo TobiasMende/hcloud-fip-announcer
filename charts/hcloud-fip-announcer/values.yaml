@@ -1,0 +1,91 @@
+# Required: identifies this cluster in the labels of managed Floating IPs.
+clusterId: ""
+
+image:
+  repository: ghcr.io/tobiasmende/hcloud-fip-announcer
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+replicaCount: 2
+
+hcloud:
+  # Either reference an existing Secret ...
+  existingSecret: ""
+  existingSecretKey: token
+  # ... or let the chart create one from this value. The token is project-wide read/write.
+  token: ""
+
+controller:
+  # Services with this loadBalancerClass are managed; "" selects Services without a class.
+  loadBalancerClass: fip-announcer.inocea.de/floating-ip
+  antiFlap: 30s
+  hetznerPollInterval: 30s
+  maxConcurrentReconciles: 4
+  probeInterval: 1s
+  probeFailureThreshold: 3
+  leaderElection:
+    leaseDuration: 6s
+    renewDeadline: 4s
+    retryPeriod: 1s
+  extraArgs: []
+
+metrics:
+  port: 8080
+  # Plain HTTP so Prometheus or Alloy can scrape without token auth.
+  secure: false
+
+healthProbePort: 8081
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+# Consider system-cluster-critical so the controller is not evicted first.
+priorityClassName: ""
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+# Replaces the default soft anti-affinity on kubernetes.io/hostname when set.
+affinity: {}
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+prometheusRule:
+  enabled: false
+  labels: {}
+
+dashboard:
+  # ConfigMap picked up by the Grafana dashboard sidecar.
+  enabled: false
+  label: grafana_dashboard
+  labelValue: "1"
+  annotations: {}
+  grafanaOperator:
+    enabled: false
+    # Matches the Grafana instances of grafana-operator v5.
+    instanceSelector:
+      matchLabels:
+        dashboards: grafana
