@@ -114,7 +114,7 @@ func TestFloatingIPByNameFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.ID != 5 || f.ServerID != 9 || f.Type != typeV4 || f.HomeLocation != locFSN || f.Labels["a"] != "b" || f.IP.String() != "203.0.113.7" {
+	if f.ID != 5 || f.ServerID != 9 || f.Type != typeV4 || f.HomeLocation != locFSN || f.Labels["a"] != "b" || f.IP.String() != "203.0.113.7" || f.NetworkZone != zone {
 		t.Fatalf("unexpected conversion: %+v", f)
 	}
 }
@@ -304,6 +304,64 @@ func TestServer(t *testing.T) {
 	}
 	if _, err := a.client().Server(context.Background(), 10); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestServerByName(t *testing.T) {
+	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/servers" {
+			return false
+		}
+		servers := []any{}
+		if r.URL.Query().Get(keyName) == "w1" {
+			servers = append(servers, map[string]any{
+				"id": 9, keyName: "w1", "status": "off",
+				"location": map[string]any{keyName: locFSN, keyZone: zone},
+			})
+		}
+		writeJSON(w, 200, map[string]any{"servers": servers})
+		return true
+	})
+	s, err := a.client().ServerByName(context.Background(), "w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ID != 9 || s.Status != "off" || s.NetworkZone != zone {
+		t.Fatalf("unexpected %+v", s)
+	}
+	if _, err := a.client().ServerByName(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestFakeExtensions(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake()
+	f.AddServer(Server{ID: 1, Name: "n1", NetworkZone: zone})
+	if s, err := f.ServerByName(ctx, "n1"); err != nil || s.ID != 1 {
+		t.Fatalf("ServerByName: %+v %v", s, err)
+	}
+	if _, err := f.ServerByName(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+	v4, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "a", Type: typeV4, HomeLocation: locFSN})
+	v6, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "b", Type: "ipv6", HomeLocation: locFSN})
+	if v4.IP.To4() == nil || v4.NetworkZone != zone {
+		t.Fatalf("v4 not allocated: %+v", v4)
+	}
+	if v6.IP.To4() != nil || v6.Network == nil || v6.Network.IP.String() != v6.IP.String() {
+		t.Fatalf("v6 not allocated: %+v", v6)
+	}
+	boom := errors.New("boom")
+	f.SetErrSequence(MethodAssign, nil, boom)
+	if err := f.Assign(ctx, v4.ID, 1); err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+	if err := f.Assign(ctx, v6.ID, 1); !errors.Is(err, boom) {
+		t.Fatalf("second call: %v", err)
+	}
+	if err := f.Assign(ctx, v6.ID, 1); err != nil {
+		t.Fatalf("sequence exhausted: %v", err)
 	}
 }
 

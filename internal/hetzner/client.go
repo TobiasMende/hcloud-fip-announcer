@@ -51,6 +51,7 @@ type FloatingIP struct {
 	ServerID     int64 // 0 means unassigned
 	Labels       map[string]string
 	HomeLocation string
+	NetworkZone  string // network zone of the home location
 }
 
 // Server is a Hetzner server.
@@ -78,6 +79,7 @@ type Client interface {
 	SetLabels(ctx context.Context, fipID int64, labels map[string]string) error
 	Delete(ctx context.Context, fipID int64) error
 	Server(ctx context.Context, id int64) (*Server, error)
+	ServerByName(ctx context.Context, name string) (*Server, error)
 }
 
 type client struct {
@@ -270,6 +272,18 @@ func (c *client) Server(ctx context.Context, id int64) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	return convertServer(s)
+}
+
+func (c *client) ServerByName(ctx context.Context, name string) (*Server, error) {
+	s, _, err := c.api.Server.GetByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return convertServer(s)
+}
+
+func convertServer(s *hcloud.Server) (*Server, error) {
 	if s == nil {
 		return nil, ErrNotFound
 	}
@@ -328,6 +342,7 @@ func convertFIP(f *hcloud.FloatingIP) *FloatingIP {
 	}
 	if f.HomeLocation != nil {
 		out.HomeLocation = f.HomeLocation.Name
+		out.NetworkZone = string(f.HomeLocation.NetworkZone)
 	}
 	return out
 }
