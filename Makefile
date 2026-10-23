@@ -265,7 +265,10 @@ endef
 CHART_DIR := charts/hcloud-fip-announcer
 
 .PHONY: chart-crds
-chart-crds: manifests ## Copy the generated CRD and the dashboard/alert sources into the chart.
+chart-crds: manifests chart-sync ## Regenerate the CRD, then copy it and the dashboard/alert sources into the chart.
+
+.PHONY: chart-sync
+chart-sync: ## Copy the CRD, dashboard and alert sources into the chart (no generation).
 	mkdir -p $(CHART_DIR)/crds $(CHART_DIR)/files
 	cp config/crd/bases/fip-announcer.inocea.de_floatingipgroups.yaml $(CHART_DIR)/crds/
 	cp dashboards/hcloud-fip-announcer.json $(CHART_DIR)/files/

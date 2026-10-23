@@ -18,13 +18,13 @@ groups:
           summary: "Floating IP group {{ $labels.group }} has no eligible node"
           description: "No node can hold the Floating IPs; traffic to the group is down."
       - alert: HcloudAPIErrors
-        expr: sum(rate(fip_announcer_hcloud_requests_total{code!~"2.."}[5m])) > 0
+        expr: sum(rate(fip_announcer_hcloud_requests_total{code!~"2..|404"}[5m])) > 0
         for: 10m
         labels:
           severity: warning
         annotations:
           summary: "Hetzner API requests are failing"
-          description: "The controller has seen non-2xx Hetzner API responses for 10 minutes."
+          description: "The controller has seen non-2xx (excluding 404) Hetzner API responses for 10 minutes. Retried attempts count, so a transient error burst also fires this."
       - alert: NoLeader
         expr: sum(leader_election_master_status) < 1 or absent(leader_election_master_status)
         for: 1m
