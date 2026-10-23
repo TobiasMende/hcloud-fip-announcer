@@ -1,0 +1,82 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "fip.fullname" . }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [services/status]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [fip-announcer.inocea.de]
+    resources: [floatingipgroups]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [fip-announcer.inocea.de]
+    resources: [floatingipgroups/status]
+    verbs: [get, update, patch]
+  - apiGroups: [fip-announcer.inocea.de]
+    resources: [floatingipgroups/finalizers]
+    verbs: [update]
+  {{- if .Values.metrics.secure }}
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "fip.fullname" . }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "fip.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "fip.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "fip.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, list, watch, create, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "fip.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "fip.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "fip.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

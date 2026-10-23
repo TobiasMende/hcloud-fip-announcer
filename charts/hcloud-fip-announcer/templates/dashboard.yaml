@@ -1,0 +1,34 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fip.fullname" . }}-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+    {{ .Values.dashboard.label }}: {{ .Values.dashboard.labelValue | quote }}
+  {{- with .Values.dashboard.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  hcloud-fip-announcer.json: |-
+    {{- .Files.Get "files/hcloud-fip-announcer.json" | nindent 4 }}
+{{- end }}
+{{- if .Values.dashboard.grafanaOperator.enabled }}
+{{- if .Values.dashboard.enabled }}
+---
+{{- end }}
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: {{ include "fip.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+spec:
+  instanceSelector:
+    {{- toYaml .Values.dashboard.grafanaOperator.instanceSelector | nindent 4 }}
+  json: |-
+    {{- .Files.Get "files/hcloud-fip-announcer.json" | nindent 4 }}
+{{- end }}

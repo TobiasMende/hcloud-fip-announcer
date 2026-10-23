@@ -1,0 +1,42 @@
+groups:
+  - name: hcloud-fip-announcer
+    rules:
+      - alert: GroupDegraded
+        expr: fip_announcer_group_degraded == 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Floating IP group {{ $labels.group }} is degraded"
+          description: "The group has been degraded for 5 minutes; check the Degraded condition of the FloatingIPGroup."
+      - alert: NoEligibleNode
+        expr: fip_announcer_eligible_nodes == 0 and fip_announcer_group_degraded == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Floating IP group {{ $labels.group }} has no eligible node"
+          description: "No node can hold the Floating IPs; traffic to the group is down."
+      - alert: HcloudAPIErrors
+        expr: sum(rate(fip_announcer_hcloud_requests_total{code!~"2..|404"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hetzner API requests are failing"
+          description: "The controller has seen non-2xx (excluding 404) Hetzner API responses for 10 minutes. Retried attempts count, so a transient error burst also fires this."
+      - alert: NoLeader
+        expr: sum(leader_election_master_status{name="hcloud-fip-announcer"}) < 1 or absent(leader_election_master_status{name="hcloud-fip-announcer"})
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No hcloud-fip-announcer leader"
+          description: "No replica holds the leader lease; Floating IPs are not being managed."
+      - alert: FrequentMoves
+        expr: sum by (group) (increase(fip_announcer_moves_total[15m])) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Floating IP group {{ $labels.group }} moved more than 3 times in 15 minutes"
+          description: "The IP is flapping between nodes; check probes and node health."

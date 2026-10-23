@@ -1,0 +1,221 @@
+suite: chart
+templates:
+  - deployment.yaml
+  - rbac.yaml
+  - dashboard.yaml
+  - pdb.yaml
+  - secret.yaml
+set:
+  clusterId: test
+  hcloud.token: secret
+tests:
+  - it: clusterId required
+    template: deployment.yaml
+    set:
+      clusterId: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: clusterId
+  - it: token or existing secret required
+    template: deployment.yaml
+    set:
+      hcloud.token: ""
+    asserts:
+      - failedTemplate:
+          errorPattern: hcloud
+  - it: runs non-root read-only
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.seccompProfile.type
+          value: RuntimeDefault
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          value: [ALL]
+  - it: 2 replicas with pod anti-affinity
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.template.spec.affinity.podAntiAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].podAffinityTerm.topologyKey
+          value: kubernetes.io/hostname
+  - it: passes flags, token and node name
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cluster-id=test
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --metrics-secure=false
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+      - equal:
+          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.key
+          value: token
+  - it: uses an existing secret
+    template: deployment.yaml
+    set:
+      hcloud.token: ""
+      hcloud.existingSecret: mine
+      hcloud.existingSecretKey: tok
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef
+          value:
+            name: mine
+            key: tok
+  - it: image tag defaults to appVersion
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: ghcr.io/tobiasmende/hcloud-fip-announcer:0.0.0
+  - it: RBAC minimal
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [""]
+              resources: [services]
+              verbs: [get, list, watch, patch]
+            - apiGroups: [""]
+              resources: [nodes]
+              verbs: [get, list, watch]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              verbs: [get, list, watch]
+            - apiGroups: [""]
+              resources: [services/status]
+              verbs: [get, patch]
+            - apiGroups: [""]
+              resources: [events]
+              verbs: [create, patch]
+            - apiGroups: [fip-announcer.inocea.de]
+              resources: [floatingipgroups]
+              verbs: [get, list, watch, update, patch]
+            - apiGroups: [fip-announcer.inocea.de]
+              resources: [floatingipgroups/status]
+              verbs: [get, update, patch]
+            - apiGroups: [fip-announcer.inocea.de]
+              resources: [floatingipgroups/finalizers]
+              verbs: [update]
+  - it: leases are namespaced
+    template: rbac.yaml
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [coordination.k8s.io]
+              resources: [leases]
+              verbs: [get, list, watch, create, update, patch]
+  - it: dashboard ConfigMap only when enabled
+    template: dashboard.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: dashboard ConfigMap when enabled
+    template: dashboard.yaml
+    set:
+      dashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+  - it: grafana operator dashboard
+    template: dashboard.yaml
+    set:
+      dashboard.grafanaOperator.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: GrafanaDashboard
+  - it: PDB keeps one pod
+    template: pdb.yaml
+    asserts:
+      - equal:
+          path: spec.minAvailable
+          value: 1
+  - it: no PDB for a single replica
+    template: pdb.yaml
+    set:
+      replicaCount: 1
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: no token review RBAC for plain metrics
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [authentication.k8s.io]
+            resources: [tokenreviews]
+            verbs: [create]
+  - it: token and access review RBAC for secure metrics
+    template: rbac.yaml
+    documentIndex: 0
+    set:
+      metrics.secure: true
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [authentication.k8s.io]
+            resources: [tokenreviews]
+            verbs: [create]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [authorization.k8s.io]
+            resources: [subjectaccessreviews]
+            verbs: [create]
+  - it: runs on control-plane nodes with the documented values
+    template: deployment.yaml
+    set:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role.kubernetes.io/control-plane: ""
+      - equal:
+          path: spec.template.spec.tolerations[0].key
+          value: node-role.kubernetes.io/control-plane

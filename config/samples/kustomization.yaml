@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- fip-announcer_v1alpha1_floatingipgroup.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
