@@ -27,6 +27,7 @@ import (
 
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -45,6 +46,9 @@ var (
 	testEnv   *envtest.Environment
 	cfg       *rest.Config
 	k8sClient client.Client
+	// cachedClient reads through an informer cache with the Service group
+	// index, like the manager's client; writes go to the API server.
+	cachedClient client.Client
 )
 
 func TestControllers(t *testing.T) {
@@ -83,6 +87,17 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+
+	informers, err := cache.New(cfg, cache.Options{Scheme: scheme.Scheme})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(IndexServiceGroup(ctx, informers)).To(Succeed())
+	go func() {
+		defer GinkgoRecover()
+		Expect(informers.Start(ctx)).To(Succeed())
+	}()
+	Expect(informers.WaitForCacheSync(ctx)).To(BeTrue())
+	cachedClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme, Cache: &client.CacheOptions{Reader: informers}})
+	Expect(err).NotTo(HaveOccurred())
 })
 
 var _ = AfterSuite(func() {

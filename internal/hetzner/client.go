@@ -51,6 +51,7 @@ type FloatingIP struct {
 	ServerID     int64 // 0 means unassigned
 	Labels       map[string]string
 	HomeLocation string
+	NetworkZone  string // network zone of the home location
 }
 
 // Server is a Hetzner server.
@@ -73,11 +74,19 @@ type CreateOpts struct {
 // Client is the Hetzner API surface used by the controller.
 type Client interface {
 	FloatingIPByName(ctx context.Context, name string) (*FloatingIP, error)
+	GetFloatingIP(ctx context.Context, id int64) (*FloatingIP, error)
+	// AllFloatingIPs and AllServers list everything in the project (paged).
+	AllFloatingIPs(ctx context.Context) ([]FloatingIP, error)
+	AllServers(ctx context.Context) ([]Server, error)
 	CreateFloatingIP(ctx context.Context, opts CreateOpts) (*FloatingIP, error)
 	Assign(ctx context.Context, fipID, serverID int64) error
+	// AssignAll issues every assignment before waiting for any of them and
+	// returns the IDs that ended up on the server.
+	AssignAll(ctx context.Context, serverID int64, fipIDs []int64) ([]int64, error)
 	SetLabels(ctx context.Context, fipID int64, labels map[string]string) error
 	Delete(ctx context.Context, fipID int64) error
 	Server(ctx context.Context, id int64) (*Server, error)
+	ServerByName(ctx context.Context, name string) (*Server, error)
 }
 
 type client struct {
@@ -216,17 +225,70 @@ func (c *client) CreateFloatingIP(ctx context.Context, opts CreateOpts) (*Floati
 	return c.refetch(ctx, res.FloatingIP.ID)
 }
 
+func (c *client) GetFloatingIP(ctx context.Context, id int64) (*FloatingIP, error) {
+	return c.refetch(ctx, id)
+}
+
+func (c *client) AllFloatingIPs(ctx context.Context) ([]FloatingIP, error) {
+	all, err := c.api.FloatingIP.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FloatingIP, 0, len(all))
+	for _, f := range all {
+		out = append(out, *convertFIP(f))
+	}
+	return out, nil
+}
+
+func (c *client) AllServers(ctx context.Context) ([]Server, error) {
+	all, err := c.api.Server.All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Server, 0, len(all))
+	for _, s := range all {
+		srv, _ := convertServer(s)
+		out = append(out, *srv)
+	}
+	return out, nil
+}
+
 // Assign assigns the Floating IP to the server. Already being assigned to that
 // server counts as success.
 func (c *client) Assign(ctx context.Context, fipID, serverID int64) error {
-	action, _, err := c.api.FloatingIP.Assign(ctx, &hcloud.FloatingIP{ID: fipID}, &hcloud.Server{ID: serverID})
-	if err == nil {
-		return c.waitAction(ctx, action)
-	}
-	if cur, getErr := c.refetch(ctx, fipID); getErr == nil && cur.ServerID == serverID {
-		return nil
-	}
+	_, err := c.AssignAll(ctx, serverID, []int64{fipID})
 	return err
+}
+
+func (c *client) AssignAll(ctx context.Context, serverID int64, fipIDs []int64) ([]int64, error) {
+	type started struct {
+		id     int64
+		action *hcloud.Action
+	}
+	var pending []started
+	var done []int64
+	var errs []error
+	for _, id := range fipIDs {
+		action, _, err := c.api.FloatingIP.Assign(ctx, &hcloud.FloatingIP{ID: id}, &hcloud.Server{ID: serverID})
+		if err == nil {
+			pending = append(pending, started{id, action})
+			continue
+		}
+		if cur, getErr := c.refetch(ctx, id); getErr == nil && cur.ServerID == serverID {
+			done = append(done, id)
+			continue
+		}
+		errs = append(errs, err)
+	}
+	for _, p := range pending {
+		if err := c.waitAction(ctx, p.action); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		done = append(done, p.id)
+	}
+	return done, errors.Join(errs...)
 }
 
 func (c *client) SetLabels(ctx context.Context, fipID int64, labels map[string]string) error {
@@ -270,6 +332,18 @@ func (c *client) Server(ctx context.Context, id int64) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	return convertServer(s)
+}
+
+func (c *client) ServerByName(ctx context.Context, name string) (*Server, error) {
+	s, _, err := c.api.Server.GetByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return convertServer(s)
+}
+
+func convertServer(s *hcloud.Server) (*Server, error) {
 	if s == nil {
 		return nil, ErrNotFound
 	}
@@ -328,6 +402,7 @@ func convertFIP(f *hcloud.FloatingIP) *FloatingIP {
 	}
 	if f.HomeLocation != nil {
 		out.HomeLocation = f.HomeLocation.Name
+		out.NetworkZone = string(f.HomeLocation.NetworkZone)
 	}
 	return out
 }

@@ -122,6 +122,7 @@ type FloatingIPGroupStatus struct {
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.status.node`
 // +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="name must be at most 63 characters; it becomes a Hetzner label value"
 
 // FloatingIPGroup is the Schema for the floatingipgroups API
 type FloatingIPGroup struct {
