@@ -49,7 +49,7 @@ type ServiceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=services/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups="",resources=services/status,verbs=get;patch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=fip-announcer.inocea.de,resources=floatingipgroups,verbs=get;list;watch
 
@@ -82,7 +82,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			"Service already carries a load balancer address not written by this controller; taking it over. Another default LoadBalancer implementation may be running")
 	}
 	if len(want) == 0 {
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.releaseOwned(ctx, svc)
 	}
 	return ctrl.Result{}, r.writeIngress(ctx, svc, want)
 }

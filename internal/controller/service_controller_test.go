@@ -100,7 +100,7 @@ var _ = Describe("Service binding reconciler", func() {
 
 	It("writes IPv4 ingress for class and annotation", func() {
 		g := newGroup("203.0.113.10", "")
-		svc := newService(ptr.To(class), g, corev1.IPv4Protocol)
+		svc := newService(new(class), g, corev1.IPv4Protocol)
 		reconcile(class, svc)
 		Expect(ingress(svc)).To(Equal([]corev1.LoadBalancerIngress{{IP: "203.0.113.10", IPMode: &vip}}))
 		reconcile(class, svc)
@@ -118,7 +118,7 @@ var _ = Describe("Service binding reconciler", func() {
 		g := newGroup("203.0.113.12", "")
 		annotated := newService(nil, g, corev1.IPv4Protocol)
 		plain := newService(nil, "", corev1.IPv4Protocol)
-		classed := newService(ptr.To(class), g, corev1.IPv4Protocol)
+		classed := newService(new(class), g, corev1.IPv4Protocol)
 		reconcile("", annotated)
 		reconcile("", plain)
 		reconcile("", classed)
@@ -152,16 +152,35 @@ var _ = Describe("Service binding reconciler", func() {
 		Expect(recorder.Events).To(Receive(ContainSubstring("NoAddress")))
 	})
 
-	It("warns on an unknown group", func() {
-		svc := newService(ptr.To(class), "does-not-exist", corev1.IPv4Protocol)
+	It("warns on an unknown group and leaves the status unchanged", func() {
+		svc := newService(new(class), "does-not-exist", corev1.IPv4Protocol)
+		svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "198.51.100.3"}}
+		Expect(k8sClient.Status().Update(bg, svc)).To(Succeed())
 		reconcile(class, svc)
 		Expect(recorder.Events).To(Receive(ContainSubstring("UnknownGroup")))
+		Expect(ingress(svc)).To(HaveLen(1))
+		Expect(ingress(svc)[0].IP).To(Equal("198.51.100.3"))
+	})
+
+	It("clears owned ingress when the group has no address for the Service", func() {
+		other := newGroup("203.0.113.17", "")
+		empty := newGroup("", "")
+		svc := newService(new(class), other, corev1.IPv4Protocol)
+		reconcile(class, svc)
+		Expect(ingress(svc)).To(HaveLen(1))
+
+		got := &corev1.Service{}
+		Expect(k8sClient.Get(bg, types.NamespacedName{Namespace: svc.Namespace, Name: svc.Name}, got)).To(Succeed())
+		got.Annotations[serviceGroupAnnotation] = empty
+		Expect(k8sClient.Update(bg, got)).To(Succeed())
+		reconcile(class, svc)
+		Expect(recorder.Events).To(Receive(ContainSubstring("NoAddress")))
 		Expect(ingress(svc)).To(BeEmpty())
 	})
 
 	It("clears the status when the annotation is removed", func() {
 		g := newGroup("203.0.113.15", "")
-		svc := newService(ptr.To(class), g, corev1.IPv4Protocol)
+		svc := newService(new(class), g, corev1.IPv4Protocol)
 		reconcile(class, svc)
 		Expect(ingress(svc)).To(HaveLen(1))
 
@@ -175,7 +194,7 @@ var _ = Describe("Service binding reconciler", func() {
 
 	It("keeps foreign status when the annotation is removed", func() {
 		newGroup("203.0.113.16", "")
-		svc := newService(ptr.To(class), "", corev1.IPv4Protocol)
+		svc := newService(new(class), "", corev1.IPv4Protocol)
 		svc.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{{IP: "198.51.100.2"}}
 		Expect(k8sClient.Status().Update(bg, svc)).To(Succeed())
 		reconcile(class, svc)
