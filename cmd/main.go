@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -37,6 +38,7 @@ import (
 
 	fipannouncerv1alpha1 "github.com/TobiasMende/hcloud-fip-announcer/api/v1alpha1"
 	"github.com/TobiasMende/hcloud-fip-announcer/internal/controller"
+	"github.com/TobiasMende/hcloud-fip-announcer/internal/probe"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -62,6 +64,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var leaseDuration, renewDeadline, retryPeriod, probeInterval time.Duration
+	var probeFailureThreshold int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -82,6 +86,16 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.DurationVar(&leaseDuration, "leader-elect-lease-duration", 6*time.Second,
+		"Duration non-leaders wait before taking over the leader lease.")
+	flag.DurationVar(&renewDeadline, "leader-elect-renew-deadline", 4*time.Second,
+		"Duration the leader keeps retrying to renew the lease before giving up.")
+	flag.DurationVar(&retryPeriod, "leader-elect-retry-period", time.Second,
+		"Duration between leader election attempts.")
+	flag.DurationVar(&probeInterval, "probe-interval", time.Second,
+		"Interval between active health probes (also the per-probe timeout).")
+	flag.IntVar(&probeFailureThreshold, "probe-failure-threshold", 3,
+		"Consecutive probe failures before a target counts as failing.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -165,6 +179,9 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "22cb396b.inocea.de",
+		LeaseDuration:          &leaseDuration,
+		RenewDeadline:          &renewDeadline,
+		RetryPeriod:            &retryPeriod,
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -187,6 +204,11 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "floatingipgroup")
+		os.Exit(1)
+	}
+	prober := probe.New(probeInterval, probeFailureThreshold)
+	if err := mgr.Add(prober); err != nil {
+		setupLog.Error(err, "Failed to add prober")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
