@@ -28,7 +28,7 @@ func node(name string, mut ...func(*corev1.Node)) corev1.Node {
 }
 
 func svc(name string) corev1.Service {
-	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: name}}
+	return corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: name}}
 }
 
 func slice(ns, service string, nodes map[string]bool) discoveryv1.EndpointSlice {
