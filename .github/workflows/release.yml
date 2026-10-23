@@ -1,8 +1,17 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag, e.g. v0.1.0
+        required: true
+        type: string
 
 permissions: {}
 
@@ -21,7 +30,17 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: refs/tags/${{ inputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require tag on main
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor HEAD origin/main \
+            || { echo "tag $TAG is not reachable from origin/main"; exit 1; }
+        env:
+          TAG: ${{ inputs.tag }}
 
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -35,7 +54,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+        env:
+          TAG: ${{ inputs.tag }}
 
       - name: Build and push image
         id: build
@@ -70,18 +91,22 @@ jobs:
       - name: Package and push chart
         run: |
           helm package charts/hcloud-fip-announcer --version "$VERSION" --app-version "$VERSION" --destination dist
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$GH_ACTOR" --password-stdin
           helm push "dist/hcloud-fip-announcer-${VERSION}.tgz" "$CHARTS" 2>&1 | tee push.log
           CHART_DIGEST=$(sed -n 's/^Digest: //p' push.log)
           cosign sign --yes "ghcr.io/tobiasmende/charts/hcloud-fip-announcer@${CHART_DIGEST}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
 
       - name: GitHub release
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
             flags=(--generate-notes)
             [[ "$VERSION" == *-* ]] && flags+=(--prerelease)
-            gh release create "$GITHUB_REF_NAME" "${flags[@]}"
+            gh release create "$TAG" "${flags[@]}"
           fi
-          gh release upload "$GITHUB_REF_NAME" sbom.spdx.json "dist/hcloud-fip-announcer-${VERSION}.tgz" --clobber
+          gh release upload "$TAG" sbom.spdx.json "dist/hcloud-fip-announcer-${VERSION}.tgz" --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}

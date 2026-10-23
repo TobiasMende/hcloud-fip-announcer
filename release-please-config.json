@@ -3,6 +3,7 @@
   "packages": {
     ".": {
       "release-type": "go",
+      "bump-minor-pre-major": true,
       "package-name": "hcloud-fip-announcer",
       "include-component-in-tag": false,
       "extra-files": [
