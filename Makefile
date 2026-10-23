@@ -259,3 +259,19 @@ endef
 define gomodver
 $(shell go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' $(1) 2>/dev/null)
 endef
+
+##@ Helm chart
+
+CHART_DIR := charts/hcloud-fip-announcer
+
+.PHONY: chart-crds
+chart-crds: manifests ## Copy the generated CRD and the dashboard/alert sources into the chart.
+	mkdir -p $(CHART_DIR)/crds $(CHART_DIR)/files
+	cp config/crd/bases/fip-announcer.inocea.de_floatingipgroups.yaml $(CHART_DIR)/crds/
+	cp dashboards/hcloud-fip-announcer.json $(CHART_DIR)/files/
+	cp examples/alerts.rules.yaml $(CHART_DIR)/files/
+
+.PHONY: chart-test
+chart-test: ## Lint the chart and run the helm-unittest suites.
+	helm lint $(CHART_DIR) --set clusterId=test --set hcloud.token=x
+	helm unittest $(CHART_DIR)

@@ -1,0 +1,15 @@
+{{- if .Values.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "fip.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "fip.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    {{- (.Files.Get "files/alerts.rules.yaml" | fromYaml).groups | toYaml | nindent 4 }}
+{{- end }}

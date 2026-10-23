@@ -12,10 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/TobiasMende/hcloud-fip-announcer/api/v1alpha1"
 	"github.com/TobiasMende/hcloud-fip-announcer/internal/eligibility"
@@ -90,6 +92,13 @@ func CheckFor(svc corev1.Service, slice discoveryv1.EndpointSlice) (Check, bool,
 	}
 	return Check{}, false, nil
 }
+
+var probeHealthy = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "fip_announcer_probe_healthy",
+	Help: "1 if the probe of a (group, node, service) target is healthy, 0 if it is failing.",
+}, []string{"group", "node", "service"})
+
+func init() { metrics.Registry.MustRegister(probeHealthy) }
 
 type targetKey struct {
 	group string
@@ -168,6 +177,7 @@ func (p *Prober) SetTargets(group string, targets []Target) {
 		if e.cancel != nil {
 			e.cancel()
 		}
+		probeHealthy.DeleteLabelValues(k.group, k.key.Node, k.key.Service)
 		delete(p.entries, k)
 	}
 	for k, t := range wanted {
@@ -258,6 +268,11 @@ func (p *Prober) record(ctx context.Context, k targetKey, e *entry, ok bool) {
 		}
 	}
 	if changed {
+		v := 0.0
+		if e.healthy {
+			v = 1
+		}
+		probeHealthy.WithLabelValues(k.group, k.key.Node, k.key.Service).Set(v)
 		p.emit(k.group)
 	}
 }

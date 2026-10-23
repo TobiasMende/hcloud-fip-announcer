@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/TobiasMende/hcloud-fip-announcer/internal/eligibility"
 )
@@ -350,4 +352,43 @@ func TestSetTargetsKeepsFailureCounter(t *testing.T) {
 	p = startProber(t)
 	p.SetTargets("g", []Target{httpTarget("n1", int(port.Load()), loopback)})
 	waitResult(t, p, key("n1"), false)
+}
+
+func TestProbeHealthyMetric(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	p := startProber(t)
+	p.SetTargets("metric-g", []Target{httpTarget("n1", portOf(t, srv), loopback)})
+	waitResult(t, p, key("n1"), true)
+
+	if got := testutil.ToFloat64(probeHealthy.WithLabelValues("metric-g", "n1", testService)); got != 1 {
+		t.Fatalf("healthy gauge = %v, want 1", got)
+	}
+
+	p.SetTargets("metric-g", nil)
+	if n := seriesOfGroup(t, "metric-g"); n != 0 {
+		t.Fatalf("gauge series after removal = %d, want 0", n)
+	}
+}
+
+func seriesOfGroup(t *testing.T, group string) int {
+	t.Helper()
+	families, err := metrics.Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, f := range families {
+		if f.GetName() != "fip_announcer_probe_healthy" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "group" && l.GetValue() == group {
+					n++
+				}
+			}
+		}
+	}
+	return n
 }

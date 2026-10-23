@@ -1,0 +1,246 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: floatingipgroups.fip-announcer.inocea.de
+spec:
+  group: fip-announcer.inocea.de
+  names:
+    kind: FloatingIPGroup
+    listKind: FloatingIPGroupList
+    plural: floatingipgroups
+    singular: floatingipgroup
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.ipv4
+      name: IPv4
+      type: string
+    - jsonPath: .status.node
+      name: Node
+      type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: FloatingIPGroup is the Schema for the floatingipgroups API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of FloatingIPGroup
+            properties:
+              deletionPolicy:
+                default: Retain
+                description: deletionPolicy decides whether the Floating IPs are kept
+                  or deleted with the group.
+                enum:
+                - Retain
+                - Delete
+                type: string
+              ipv4:
+                description: ipv4 is the IPv4 Floating IP of the group.
+                properties:
+                  ipv6Address:
+                    default: ::1
+                    description: ipv6Address is the address taken from the /64, only
+                      used for IPv6.
+                    type: string
+                  name:
+                    description: name is the Hetzner Floating IP name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              ipv6:
+                description: ipv6 is the IPv6 Floating IP of the group.
+                properties:
+                  ipv6Address:
+                    default: ::1
+                    description: ipv6Address is the address taken from the /64, only
+                      used for IPv6.
+                    type: string
+                  name:
+                    description: name is the Hetzner Floating IP name.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              location:
+                description: location is the Hetzner home location for created Floating
+                  IPs.
+                minLength: 1
+                type: string
+              nodeSelector:
+                description: nodeSelector restricts eligible nodes, AND-combined with
+                  the member Services.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+            required:
+            - location
+            type: object
+            x-kubernetes-validations:
+            - message: at least one of ipv4 or ipv6 must be set
+              rule: has(self.ipv4) || has(self.ipv6)
+          status:
+            description: status defines the observed state of FloatingIPGroup
+            properties:
+              conditions:
+                description: conditions represent the current state of the FloatingIPGroup
+                  (Ready, Degraded).
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              ipv4:
+                description: ipv4 is the assigned IPv4 address.
+                type: string
+              ipv6:
+                description: ipv6 is the assigned IPv6 address taken from the /64.
+                type: string
+              node:
+                description: node is the node currently holding the Floating IPs.
+                type: string
+              reason:
+                description: reason is why the Floating IPs are on the node.
+                enum:
+                - Initial
+                - NodeCordoned
+                - ProbeFailed
+                - EndpointsNotReady
+                - NodeNotReady
+                - ServerGone
+                - External
+                type: string
+              since:
+                description: since is when the Floating IPs arrived on the node.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

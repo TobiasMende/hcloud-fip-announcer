@@ -1,0 +1,11 @@
+apiVersion: fip-announcer.inocea.de/v1alpha1
+kind: FloatingIPGroup
+metadata:
+  name: ingress
+spec:
+  location: fsn1
+  ipv4:
+    name: ingress-v4
+  nodeSelector:
+    matchLabels:
+      traefik: enabled
