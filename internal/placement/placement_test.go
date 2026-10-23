@@ -112,3 +112,16 @@ func TestInitialAssignment(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestPrefersHomeLocation(t *testing.T) {
+	in := base()
+	in.Holder = "a"
+	in.HolderCordoned = true
+	in.HolderReason = v1alpha1.MoveReasonNodeCordoned
+	in.Eligible = []string{"b", "c"}
+	in.HomeNodes = map[string]bool{"c": true}
+	in.FIPCount = map[string]int{"c": 1}
+	if got := Decide(in); got.Action != Move || got.Target != "c" {
+		t.Fatalf("home location must win over fewer FIPs and name order, got %+v", got)
+	}
+}

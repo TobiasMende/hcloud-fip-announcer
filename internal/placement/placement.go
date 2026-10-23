@@ -30,6 +30,8 @@ type Input struct {
 	LeaderNode       string
 	// FIPCount is the number of group FIPs per node.
 	FIPCount map[string]int
+	// HomeNodes are the nodes in the Floating IPs' home location.
+	HomeNodes map[string]bool
 }
 
 type Decision struct {
@@ -67,6 +69,9 @@ func pick(in Input) string {
 }
 
 func better(in Input, a, b string) bool {
+	if ha, hb := in.HomeNodes[a], in.HomeNodes[b]; ha != hb {
+		return ha
+	}
 	if ca, cb := in.FIPCount[a], in.FIPCount[b]; ca != cb {
 		return ca < cb
 	}
