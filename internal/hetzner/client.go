@@ -137,15 +137,46 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if !retryable(resp.StatusCode) || attempt == maxAttempts {
 			return resp, nil
 		}
+		wait := delay
+		if d, ok := rateLimitDelay(resp, time.Now()); ok {
+			wait = d
+		}
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 		select {
 		case <-req.Context().Done():
 			return nil, req.Context().Err()
-		case <-time.After(delay):
+		case <-time.After(wait):
 		}
 		delay *= 2
 	}
+}
+
+const maxRetryAfter = 10 * time.Second
+
+// rateLimitDelay returns the wait requested by a 429 response via Retry-After
+// (seconds) or RateLimit-Reset (unix timestamp), capped at maxRetryAfter.
+func rateLimitDelay(resp *http.Response, now time.Time) (time.Duration, bool) {
+	if resp.StatusCode != http.StatusTooManyRequests {
+		return 0, false
+	}
+	var d time.Duration
+	if v := resp.Header.Get("Retry-After"); v != "" {
+		secs, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, false
+		}
+		d = time.Duration(secs) * time.Second
+	} else if v := resp.Header.Get("RateLimit-Reset"); v != "" {
+		ts, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		d = time.Unix(ts, 0).Sub(now)
+	} else {
+		return 0, false
+	}
+	return min(max(d, 0), maxRetryAfter), true
 }
 
 func retryable(code int) bool {
@@ -165,10 +196,12 @@ func (c *client) FloatingIPByName(ctx context.Context, name string) (*FloatingIP
 
 func (c *client) CreateFloatingIP(ctx context.Context, opts CreateOpts) (*FloatingIP, error) {
 	create := hcloud.FloatingIPCreateOpts{
-		Type:         hcloud.FloatingIPType(opts.Type),
-		Name:         &opts.Name,
-		HomeLocation: &hcloud.Location{Name: opts.HomeLocation},
-		Labels:       opts.Labels,
+		Type:   hcloud.FloatingIPType(opts.Type),
+		Name:   &opts.Name,
+		Labels: opts.Labels,
+	}
+	if opts.HomeLocation != "" {
+		create.HomeLocation = &hcloud.Location{Name: opts.HomeLocation}
 	}
 	res, _, err := c.api.FloatingIP.Create(ctx, create)
 	if err != nil {

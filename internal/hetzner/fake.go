@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// Method names used as keys for Fake.Errs and Fake.Calls.
+// Method names used as keys for SetErr and CallCount.
 const (
 	MethodFloatingIPByName = "FloatingIPByName"
 	MethodCreateFloatingIP = "CreateFloatingIP"
@@ -17,15 +17,15 @@ const (
 	MethodServer           = "Server"
 )
 
-// Fake is an in-memory Client for tests. Errs injects an error per method
-// name; Calls counts invocations per method name.
+// Fake is an in-memory Client for tests. SetErr injects an error per method
+// name; CallCount counts invocations per method name.
 type Fake struct {
 	mu      sync.Mutex
 	nextID  int64
 	fips    map[int64]*FloatingIP
 	servers map[int64]*Server
-	Errs    map[string]error
-	Calls   map[string]int
+	errs    map[string]error
+	calls   map[string]int
 }
 
 var _ Client = (*Fake)(nil)
@@ -36,8 +36,8 @@ func NewFake() *Fake {
 		nextID:  1000,
 		fips:    map[int64]*FloatingIP{},
 		servers: map[int64]*Server{},
-		Errs:    map[string]error{},
-		Calls:   map[string]int{},
+		errs:    map[string]error{},
+		calls:   map[string]int{},
 	}
 }
 
@@ -67,23 +67,23 @@ func (f *Fake) SetErr(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err == nil {
-		delete(f.Errs, method)
+		delete(f.errs, method)
 		return
 	}
-	f.Errs[method] = err
+	f.errs[method] = err
 }
 
 // CallCount returns how often a method was called.
 func (f *Fake) CallCount(method string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.Calls[method]
+	return f.calls[method]
 }
 
 // enter counts the call and returns the injected error. Callers hold f.mu.
 func (f *Fake) enter(method string) error {
-	f.Calls[method]++
-	return f.Errs[method]
+	f.calls[method]++
+	return f.errs[method]
 }
 
 func (f *Fake) FloatingIPByName(_ context.Context, name string) (*FloatingIP, error) {

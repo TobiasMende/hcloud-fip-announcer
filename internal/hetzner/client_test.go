@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,17 +18,18 @@ import (
 )
 
 const (
-	fipID     = 5
-	fipPath   = "/floating_ips/5"
-	keyFIP    = "floating_ip"
-	keyAction = "action"
-	keyFIPs   = "floating_ips"
-	zone      = "eu-central"
-	fipName   = "web"
-	keyName   = "name"
-	keyZone   = "network_zone"
-	typeV4    = "ipv4"
-	locFSN    = "fsn1"
+	fipID           = 5
+	floatingIPsPath = "/floating_ips"
+	fipPath         = "/floating_ips/5"
+	keyFIP          = "floating_ip"
+	keyAction       = "action"
+	keyFIPs         = "floating_ips"
+	zone            = "eu-central"
+	fipName         = "web"
+	keyName         = "name"
+	keyZone         = "network_zone"
+	typeV4          = "ipv4"
+	locFSN          = "fsn1"
 )
 
 type apiServer struct {
@@ -91,7 +93,7 @@ func fipJSON(server int, protected bool) map[string]any {
 
 func TestFloatingIPByNameNotFound(t *testing.T) {
 	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path == "/floating_ips" && r.URL.Query().Get("name") == fipName {
+		if r.URL.Path == floatingIPsPath && r.URL.Query().Get("name") == fipName {
 			writeJSON(w, 200, map[string]any{keyFIPs: []any{}})
 			return true
 		}
@@ -122,7 +124,7 @@ func TestCreateEnablesDeleteProtection(t *testing.T) {
 	var protectionBody map[string]any
 	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/floating_ips":
+		case r.Method == http.MethodPost && r.URL.Path == floatingIPsPath:
 			_ = json.NewDecoder(r.Body).Decode(&created)
 			writeJSON(w, 201, map[string]any{keyFIP: fipJSON(0, false)})
 		case r.Method == http.MethodPost && r.URL.Path == fipPath+"/actions/change_protection":
@@ -349,5 +351,88 @@ func TestFakeBehaviour(t *testing.T) {
 	}
 	if f.FloatingIP(fip.ID) != nil {
 		t.Fatal("not deleted")
+	}
+}
+
+func TestRetryAfterHonoredAndCapped(t *testing.T) {
+	now := time.Unix(1000, 0)
+	mk := func(h, v string) *http.Response {
+		r := &http.Response{StatusCode: 429, Header: http.Header{}}
+		r.Header.Set(h, v)
+		return r
+	}
+	cases := []struct {
+		name string
+		resp *http.Response
+		want time.Duration
+		ok   bool
+	}{
+		{"retry-after", mk("Retry-After", "3"), 3 * time.Second, true},
+		{"capped", mk("Retry-After", "600"), maxRetryAfter, true},
+		{"reset", mk("RateLimit-Reset", "1004"), 4 * time.Second, true},
+		{"reset in past", mk("RateLimit-Reset", "900"), 0, true},
+		{"none", &http.Response{StatusCode: 429, Header: http.Header{}}, 0, false},
+		{"not 429", &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {"3"}}}, 0, false},
+	}
+	for _, c := range cases {
+		got, ok := rateLimitDelay(c.resp, now)
+		if got != c.want || ok != c.ok {
+			t.Errorf("%s: got %v,%v want %v,%v", c.name, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+func TestRetryAfterUsedByTransport(t *testing.T) {
+	calls := 0
+	a := newAPI(t, func(w http.ResponseWriter, _ *http.Request) bool {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			apiError(w, 429, "rate_limit_exceeded")
+		} else {
+			writeJSON(w, 200, map[string]any{keyFIPs: []any{fipJSON(0, true)}})
+		}
+		return true
+	})
+	start := time.Now()
+	if _, err := a.client().FloatingIPByName(context.Background(), fipName); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < 900*time.Millisecond {
+		t.Fatal("Retry-After not honored")
+	}
+}
+
+func TestRetriedPostResendsIdenticalBody(t *testing.T) {
+	var bodies []string
+	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPut {
+			return false
+		}
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(b))
+		if len(bodies) == 1 {
+			apiError(w, 502, "bad_gateway")
+		} else {
+			writeJSON(w, 200, map[string]any{keyFIP: fipJSON(0, true)})
+		}
+		return true
+	})
+	if err := a.client().SetLabels(context.Background(), fipID, map[string]string{"k": "v"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(bodies) != 2 || bodies[0] == "" || bodies[0] != bodies[1] {
+		t.Fatalf("bodies %q", bodies)
+	}
+}
+
+func TestCreateWithoutHomeLocationRejectedBeforeRequest(t *testing.T) {
+	a := newAPI(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	_, err := a.client().CreateFloatingIP(context.Background(), CreateOpts{Name: fipName, Type: typeV4})
+	if err == nil || !strings.Contains(err.Error(), "HomeLocation") {
+		t.Fatalf("want HomeLocation validation error, got %v", err)
+	}
+	if n := len(a.seen()); n != 0 {
+		t.Fatalf("%d requests sent", n)
 	}
 }
