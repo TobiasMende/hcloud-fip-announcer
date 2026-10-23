@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ const (
 	typeV4          = "ipv4"
 	locFSN          = "fsn1"
 	keyStatus       = "status"
+	statusRunning   = "running"
 	keyLocation     = "location"
 )
 
@@ -494,5 +496,98 @@ func TestCreateWithoutHomeLocationRejectedBeforeRequest(t *testing.T) {
 	}
 	if n := len(a.seen()); n != 0 {
 		t.Fatalf("%d requests sent", n)
+	}
+}
+
+func TestListsAndGetByID(t *testing.T) {
+	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch r.URL.Path {
+		case floatingIPsPath:
+			writeJSON(w, 200, map[string]any{keyFIPs: []any{fipJSON(9, true)}})
+		case fipPath:
+			writeJSON(w, 200, map[string]any{keyFIP: fipJSON(9, true)})
+		case "/servers":
+			writeJSON(w, 200, map[string]any{"servers": []any{map[string]any{
+				"id": 9, keyName: "w1", keyStatus: statusRunning,
+				keyLocation: map[string]any{keyName: locFSN, keyZone: zone},
+			}}})
+		default:
+			return false
+		}
+		return true
+	})
+	ctx := context.Background()
+	fips, err := a.client().AllFloatingIPs(ctx)
+	if err != nil || len(fips) != 1 || fips[0].ServerID != 9 || fips[0].NetworkZone != zone {
+		t.Fatalf("AllFloatingIPs: %+v %v", fips, err)
+	}
+	servers, err := a.client().AllServers(ctx)
+	if err != nil || len(servers) != 1 || servers[0].Name != "w1" || servers[0].NetworkZone != zone {
+		t.Fatalf("AllServers: %+v %v", servers, err)
+	}
+	f, err := a.client().GetFloatingIP(ctx, fipID)
+	if err != nil || f.ID != fipID {
+		t.Fatalf("GetFloatingIP: %+v %v", f, err)
+	}
+}
+
+func TestAssignAllIssuesEveryAssignBeforeWaiting(t *testing.T) {
+	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/actions/assign"):
+			id := 1
+			if strings.Contains(r.URL.Path, "/6/") {
+				id = 2
+			}
+			writeJSON(w, 201, map[string]any{keyAction: map[string]any{"id": id, keyStatus: statusRunning, "progress": 0, "command": "x"}})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/actions"):
+			ids := r.URL.Query()["id"]
+			actions := make([]any, 0, len(ids))
+			for _, id := range ids {
+				n, _ := strconv.Atoi(id)
+				actions = append(actions, okAction(n))
+			}
+			writeJSON(w, 200, map[string]any{"actions": actions})
+		default:
+			return false
+		}
+		return true
+	})
+	done, err := a.client().AssignAll(context.Background(), 9, []int64{5, 6})
+	if err != nil || len(done) != 2 {
+		t.Fatalf("done %v err %v", done, err)
+	}
+	seen := a.seen()
+	if len(seen) < 3 || !strings.HasPrefix(seen[0], "POST") || !strings.HasPrefix(seen[1], "POST") {
+		t.Fatalf("both assigns must be issued before waiting: %v", seen)
+	}
+}
+
+func TestFakeListsAndAssignAll(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake()
+	f.AddServer(Server{ID: 1, Name: "n1"})
+	v4, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "a", Type: typeV4, HomeLocation: locFSN})
+	v6, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "b", Type: "ipv6", HomeLocation: locFSN})
+	boom := errors.New("boom")
+	f.SetErrSequence(MethodAssign, nil, boom)
+	done, err := f.AssignAll(ctx, 1, []int64{v4.ID, v6.ID})
+	if !errors.Is(err, boom) || len(done) != 1 || done[0] != v4.ID {
+		t.Fatalf("done %v err %v", done, err)
+	}
+	if f.FloatingIP(v4.ID).ServerID != 1 || f.FloatingIP(v6.ID).ServerID != 0 {
+		t.Fatal("partial assignment not applied")
+	}
+	fips, _ := f.AllFloatingIPs(ctx)
+	servers, _ := f.AllServers(ctx)
+	got, _ := f.GetFloatingIP(ctx, v6.ID)
+	if len(fips) != 2 || len(servers) != 1 || got.Name != "b" {
+		t.Fatalf("lists %d %d get %+v", len(fips), len(servers), got)
+	}
+	if f.CallCount(MethodAllFloatingIPs) != 1 || f.CallCount(MethodAllServers) != 1 || f.CallCount(MethodGetFloatingIP) != 1 {
+		t.Fatal("call counts")
+	}
+	if _, err := f.GetFloatingIP(ctx, 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }

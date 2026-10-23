@@ -229,7 +229,7 @@ func eligibleNodes(reasons map[string]eligibility.Reason) []string {
 
 // probeTargets returns one target per (node, member Service) with at least
 // one ready local endpoint and something to probe.
-func (r *FloatingIPGroupReconciler) probeTargets(s *snapshot) []probe.Target {
+func (r *FloatingIPGroupReconciler) probeTargets(group string, s *snapshot) []probe.Target {
 	byKey := map[eligibility.NodeKey]*probe.Target{}
 	for _, svc := range s.services {
 		key := svc.Namespace + "/" + svc.Name
@@ -238,9 +238,7 @@ func (r *FloatingIPGroupReconciler) probeTargets(s *snapshot) []probe.Target {
 				continue
 			}
 			check, ok, err := probe.CheckFor(svc, slice)
-			if err != nil {
-				r.Recorder.Eventf(&svc, corev1.EventTypeWarning, "InvalidHealthCheck", "%v", err)
-			}
+			r.reportHealthCheck(group, &svc, err)
 			if !ok {
 				continue
 			}
@@ -269,6 +267,30 @@ func (r *FloatingIPGroupReconciler) probeTargets(s *snapshot) []probe.Target {
 		out = append(out, *byKey[k])
 	}
 	return out
+}
+
+// reportHealthCheck emits InvalidHealthCheck only when the error of a
+// Service's health check changes.
+func (r *FloatingIPGroupReconciler) reportHealthCheck(group string, svc *corev1.Service, err error) {
+	key := group + "\x00" + svc.Namespace + "/" + svc.Name
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	r.mu.Lock()
+	prev := r.healthErrs[key]
+	if msg == "" {
+		delete(r.healthErrs, key)
+	} else {
+		if r.healthErrs == nil {
+			r.healthErrs = map[string]string{}
+		}
+		r.healthErrs[key] = msg
+	}
+	r.mu.Unlock()
+	if msg != "" && msg != prev {
+		r.Recorder.Event(svc, corev1.EventTypeWarning, "InvalidHealthCheck", msg)
+	}
 }
 
 func parseIPs(addrs []string) []net.IP {

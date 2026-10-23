@@ -69,6 +69,7 @@ func main() {
 	var probeFailureThreshold int
 	var clusterID, loadBalancerClass string
 	var antiFlap, hetznerPollInterval time.Duration
+	var maxConcurrentReconciles int
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -107,6 +108,8 @@ func main() {
 		"Minimum time between two moves of a group, unless the holder is cordoned or its server is gone.")
 	flag.DurationVar(&hetznerPollInterval, "hetzner-poll-interval", 30*time.Second,
 		"How long Hetzner reads are cached; Floating IPs are also re-read right before every move.")
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 4,
+		"How many FloatingIPGroups are reconciled in parallel.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -131,8 +134,12 @@ func main() {
 		setupLog.Error(nil, "--anti-flap must not be negative", "value", antiFlap)
 		os.Exit(1)
 	}
-	if hetznerPollInterval <= 0 {
-		setupLog.Error(nil, "--hetzner-poll-interval must be greater than 0", "value", hetznerPollInterval)
+	if hetznerPollInterval < 10*time.Second {
+		setupLog.Error(nil, "--hetzner-poll-interval must be at least 10s", "value", hetznerPollInterval)
+		os.Exit(1)
+	}
+	if maxConcurrentReconciles < 1 {
+		setupLog.Error(nil, "--max-concurrent-reconciles must be at least 1", "value", maxConcurrentReconciles)
 		os.Exit(1)
 	}
 	hcloudToken := os.Getenv("HCLOUD_TOKEN")
@@ -262,6 +269,8 @@ func main() {
 		AntiFlap:     antiFlap,
 		PollInterval: hetznerPollInterval,
 		LeaderNode:   os.Getenv("NODE_NAME"),
+
+		MaxConcurrentReconciles: maxConcurrentReconciles,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "floatingipgroup")
 		os.Exit(1)

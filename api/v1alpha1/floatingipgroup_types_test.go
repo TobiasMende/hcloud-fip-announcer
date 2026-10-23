@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -97,6 +98,17 @@ func TestRejectsUnknownDeletionPolicy(t *testing.T) {
 	})
 	if err := k8sClient.Create(context.Background(), g); err == nil {
 		t.Fatal("expected unknown deletionPolicy to be rejected")
+	}
+}
+
+func TestRejectsNameLongerThan63(t *testing.T) {
+	ok := newGroup(strings.Repeat("a", 63), FloatingIPGroupSpec{Location: testLocation, IPv4: &FloatingIPRef{Name: "a"}})
+	if err := k8sClient.Create(context.Background(), ok); err != nil {
+		t.Fatalf("63 characters: %v", err)
+	}
+	long := newGroup(strings.Repeat("b", 64), FloatingIPGroupSpec{Location: testLocation, IPv4: &FloatingIPRef{Name: "a"}})
+	if err := k8sClient.Create(context.Background(), long); err == nil {
+		t.Fatal("expected a 64-character name to be rejected")
 	}
 }
 

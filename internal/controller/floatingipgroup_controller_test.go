@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"maps"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -157,11 +158,22 @@ func newEnv(suffixes []string, withEndpoints ...string) *env {
 		e.fake.AddServer(hetzner.Server{ID: e.serverID(s), Name: e.node(s), Status: "running", Location: testLocation, NetworkZone: testZone})
 	}
 
-	e.svc = &corev1.Service{
+	e.svc = e.addService(e.group, nil, withEndpoints...)
+
+	e.r = e.newReconciler()
+	return e
+}
+
+// addService creates a member Service of group with ready endpoints on the
+// nodes in withEndpoints.
+func (e *env) addService(group string, annotations map[string]string, withEndpoints ...string) *corev1.Service {
+	GinkgoHelper()
+	bg := context.Background()
+	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("fipsvc-%d", n),
+			Name:        "fipsvc-" + group,
 			Namespace:   testNamespace,
-			Annotations: map[string]string{serviceGroupAnnotation: e.group},
+			Annotations: map[string]string{serviceGroupAnnotation: group},
 		},
 		Spec: corev1.ServiceSpec{
 			Type:              corev1.ServiceTypeLoadBalancer,
@@ -169,30 +181,29 @@ func newEnv(suffixes []string, withEndpoints ...string) *env {
 			Ports:             []corev1.ServicePort{{Port: 80}},
 		},
 	}
-	Expect(k8sClient.Create(bg, e.svc)).To(Succeed())
-	waitCached(e.svc)
+	maps.Copy(svc.Annotations, annotations)
+	Expect(k8sClient.Create(bg, svc)).To(Succeed())
+	waitCached(svc)
 
 	slice := &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("fipsvc-%d-abc", n),
+			Name:      svc.Name + "-abc",
 			Namespace: testNamespace,
-			Labels:    map[string]string{discoveryv1.LabelServiceName: e.svc.Name},
+			Labels:    map[string]string{discoveryv1.LabelServiceName: svc.Name},
 		},
 		AddressType: discoveryv1.AddressTypeIPv4,
 		Ports:       []discoveryv1.EndpointPort{{Port: ptr.To[int32](8080), Protocol: ptr.To(corev1.ProtocolTCP)}},
 	}
 	for i, s := range withEndpoints {
 		slice.Endpoints = append(slice.Endpoints, discoveryv1.Endpoint{
-			Addresses:  []string{fmt.Sprintf("10.%d.%d.%d", n/250, n%250, i+1)},
+			Addresses:  []string{fmt.Sprintf("10.%d.%d.%d", e.n/250, e.n%250, i+1)},
 			NodeName:   new(e.node(s)),
 			Conditions: discoveryv1.EndpointConditions{Ready: new(true)},
 		})
 	}
 	Expect(k8sClient.Create(bg, slice)).To(Succeed())
 	waitCached(slice)
-
-	e.r = e.newReconciler()
-	return e
+	return svc
 }
 
 // newReconciler returns a fresh controller instance, as after a restart.
@@ -257,12 +268,17 @@ func (e *env) createGroup(families ...string) {
 
 func (e *env) createGroupWith(policy v1alpha1.DeletionPolicy, families ...string) {
 	GinkgoHelper()
+	e.createNamedGroup(e.group, policy, families...)
+}
+
+func (e *env) createNamedGroup(name string, policy v1alpha1.DeletionPolicy, families ...string) {
+	GinkgoHelper()
 	g := &v1alpha1.FloatingIPGroup{
-		ObjectMeta: metav1.ObjectMeta{Name: e.group},
+		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec:       v1alpha1.FloatingIPGroupSpec{Location: testLocation, DeletionPolicy: policy},
 	}
 	for _, f := range families {
-		ref := &v1alpha1.FloatingIPRef{Name: e.fipName(f)}
+		ref := &v1alpha1.FloatingIPRef{Name: name + "-" + f}
 		if f == familyIPv6 {
 			g.Spec.IPv6 = ref
 		} else {
@@ -273,7 +289,11 @@ func (e *env) createGroupWith(policy v1alpha1.DeletionPolicy, families ...string
 }
 
 func (e *env) reconcile() (ctrl.Result, error) {
-	return e.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: e.group}})
+	return e.reconcileGroup(e.group)
+}
+
+func (e *env) reconcileGroup(name string) (ctrl.Result, error) {
+	return e.r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: name}})
 }
 
 func (e *env) mustReconcile() ctrl.Result {
@@ -288,6 +308,36 @@ func (e *env) get() *v1alpha1.FloatingIPGroup {
 	g := &v1alpha1.FloatingIPGroup{}
 	Expect(k8sClient.Get(context.Background(), types.NamespacedName{Name: e.group}, g)).To(Succeed())
 	return g
+}
+
+func (e *env) getGroup(name string) *v1alpha1.FloatingIPGroup {
+	GinkgoHelper()
+	g := &v1alpha1.FloatingIPGroup{}
+	Expect(k8sClient.Get(context.Background(), types.NamespacedName{Name: name}, g)).To(Succeed())
+	return g
+}
+
+// flakyStatusClient fails the next status writes.
+type flakyStatusClient struct {
+	client.Client
+	failures atomic.Int32
+}
+
+func (c *flakyStatusClient) Status() client.SubResourceWriter {
+	return &flakyStatusWriter{SubResourceWriter: c.Client.Status(), c: c}
+}
+
+type flakyStatusWriter struct {
+	client.SubResourceWriter
+	c *flakyStatusClient
+}
+
+func (w *flakyStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch,
+	opts ...client.SubResourcePatchOption) error {
+	if w.c.failures.Add(-1) >= 0 {
+		return errors.New("status write failed")
+	}
+	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
 }
 
 func (e *env) gone() bool {
@@ -419,8 +469,10 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		e := newEnv([]string{"a"}, "a")
 		e.addFIP(familyIPv4, 0, map[string]string{clusterIDLabel: "other", groupLabel: e.group})
 		e.createGroup(familyIPv4)
+		e.prober.SetTargets(e.group, []probe.Target{{Node: "stale"}})
 
 		e.mustReconcile()
+		Expect(e.prober.targetsOf(e.group)).To(BeEmpty())
 
 		g := e.get()
 		expectDegraded(g, reasonRefused)
@@ -671,35 +723,192 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 	})
 
 	It("TestPollingRespectsBudget", func() {
-		e := newEnv([]string{"a", "b"}, "a", "b")
+		e := newEnv([]string{"a", "b", "c"}, "a", "b", "c")
+		second := e.group + "-second"
+		e.addService(second, nil, "a", "b", "c")
 		e.createGroup(familyIPv4, familyIPv6)
-		e.mustReconcile()
-
-		reads := func() int {
-			return e.fake.CallCount(hetzner.MethodFloatingIPByName) +
-				e.fake.CallCount(hetzner.MethodServer) +
+		e.createNamedGroup(second, v1alpha1.DeletionPolicyRetain, familyIPv4, familyIPv6)
+		both := func() {
+			GinkgoHelper()
+			for _, g := range []string{e.group, second} {
+				res, err := e.reconcileGroup(g)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(res.RequeueAfter).To(Equal(30 * time.Second))
+			}
+		}
+		lists := func() int {
+			return e.fake.CallCount(hetzner.MethodAllFloatingIPs) + e.fake.CallCount(hetzner.MethodAllServers)
+		}
+		perItemReads := func() int {
+			return e.fake.CallCount(hetzner.MethodFloatingIPByName) + e.fake.CallCount(hetzner.MethodServer) +
 				e.fake.CallCount(hetzner.MethodServerByName)
 		}
-		afterFirst := reads()
 
-		By("reconciles within the poll interval read nothing from Hetzner")
+		By("the first round costs one list of each for both groups and all nodes")
+		both()
+		Expect(lists()).To(Equal(2))
+
+		By("reconciles within the poll interval read nothing")
 		for range 5 {
 			e.clock.Advance(5 * time.Second)
-			Expect(e.mustReconcile().RequeueAfter).To(Equal(30 * time.Second))
+			both()
 		}
-		Expect(reads()).To(Equal(afterFirst))
+		Expect(lists()).To(Equal(2))
 
-		By("the poll refreshes each FIP and each candidate server once")
+		By("the next interval costs exactly one more list of each")
 		e.clock.Advance(5 * time.Second)
-		e.mustReconcile()
-		e.mustReconcile()
-		Expect(reads()).To(Equal(afterFirst + 4)) // 2 FIPs + 2 servers
+		both()
+		both()
+		Expect(lists()).To(Equal(4))
+		Expect(perItemReads()).To(BeZero())
 
-		By("a move re-reads the FIPs right before assigning")
+		By("a move re-reads its FIPs by ID right before assigning")
 		e.cordon()
-		fipReads := e.fake.CallCount(hetzner.MethodFloatingIPByName)
+		gets := e.fake.CallCount(hetzner.MethodGetFloatingIP)
 		e.mustReconcile()
-		Expect(e.fake.CallCount(hetzner.MethodFloatingIPByName)).To(Equal(fipReads + 2))
+		Expect(e.fake.CallCount(hetzner.MethodGetFloatingIP)).To(Equal(gets + 2))
+		Expect(lists()).To(Equal(4))
+		Expect(e.fip(familyIPv4).ServerID).NotTo(Equal(e.serverID("a")))
+	})
+
+	It("TestRefreshErrorKeepsSnapshotAndBacksOff", func() {
+		By("without any snapshot the group waits for the backoff")
+		empty := newEnv([]string{"a"}, "a")
+		empty.createGroup(familyIPv4)
+		empty.fake.SetErr(hetzner.MethodAllFloatingIPs, errors.New("429 rate limited"))
+		Expect(empty.mustReconcile().RequeueAfter).To(Equal(refreshBackoff))
+		Expect(empty.fake.CallCount(hetzner.MethodCreateFloatingIP)).To(BeZero())
+
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4)
+		e.mustReconcile()
+		e.fake.SetErr(hetzner.MethodAllFloatingIPs, errors.New("429 rate limited"))
+
+		e.clock.Advance(30 * time.Second)
+		Expect(e.mustReconcile().RequeueAfter).To(Equal(refreshBackoff))
+		Expect(e.fake.CallCount(hetzner.MethodAllFloatingIPs)).To(Equal(2))
+		expectReady(e.get())
+
+		By("no retry before the backoff, but a cordon still moves with a fresh read")
+		e.clock.Advance(5 * time.Second)
+		e.cordon()
+		Expect(e.mustReconcile().RequeueAfter).To(Equal(refreshBackoff))
+		Expect(e.fake.CallCount(hetzner.MethodAllFloatingIPs)).To(Equal(2))
 		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("b")))
+
+		By("after the backoff the refresh is retried")
+		e.fake.SetErr(hetzner.MethodAllFloatingIPs, nil)
+		e.clock.Advance(5 * time.Second)
+		Expect(e.mustReconcile().RequeueAfter).To(Equal(30 * time.Second))
+		Expect(e.fake.CallCount(hetzner.MethodAllFloatingIPs)).To(Equal(3))
+	})
+
+	It("TestConcurrentGroupsShareOneRefresh", func() {
+		e := newEnv([]string{"a", "b", "c"}, "a", "b", "c")
+		e.createGroup(familyIPv4)
+		names := make([]string, 0, 4)
+		names = append(names, e.group)
+		for i := range 3 {
+			name := fmt.Sprintf("%s-c%d", e.group, i)
+			e.addService(name, nil, "a", "b", "c")
+			e.createNamedGroup(name, v1alpha1.DeletionPolicyRetain, familyIPv4, familyIPv6)
+			names = append(names, name)
+		}
+		var wg sync.WaitGroup
+		for _, name := range names {
+			wg.Go(func() {
+				defer GinkgoRecover()
+				_, err := e.reconcileGroup(name)
+				Expect(err).NotTo(HaveOccurred())
+			})
+		}
+		wg.Wait()
+		Expect(e.fake.CallCount(hetzner.MethodAllFloatingIPs)).To(Equal(1))
+		Expect(e.fake.CallCount(hetzner.MethodAllServers)).To(Equal(1))
+		for _, name := range names {
+			Expect(e.getGroup(name).Status.Node).NotTo(BeEmpty())
+		}
+	})
+
+	It("TestNoMembersNotPlaced", func() {
+		e := newEnv([]string{"a"}, "a")
+		name := e.group + "-empty"
+		e.createNamedGroup(name, v1alpha1.DeletionPolicyRetain, familyIPv4)
+
+		_, err := e.reconcileGroup(name)
+		Expect(err).NotTo(HaveOccurred())
+
+		g := e.getGroup(name)
+		c := meta.FindStatusCondition(g.Status.Conditions, v1alpha1.ConditionReady)
+		Expect(c).NotTo(BeNil())
+		Expect(c.Status).To(Equal(metav1.ConditionFalse))
+		Expect(c.Reason).To(Equal(reasonNoMembers))
+		Expect(meta.IsStatusConditionFalse(g.Status.Conditions, v1alpha1.ConditionDegraded)).To(BeTrue())
+		Expect(e.fake.CallCount(hetzner.MethodAssign)).To(BeZero())
+	})
+
+	It("TestInterruptedInitialAssignmentCompletes", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4, familyIPv6)
+		e.fake.SetErrSequence(hetzner.MethodAssign, nil, errors.New("action failed"))
+
+		_, err := e.reconcile()
+		Expect(err).To(HaveOccurred())
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("a")))
+		Expect(e.fip(familyIPv6).ServerID).To(BeZero())
+		Expect(e.get().Status.Node).To(BeEmpty())
+		e.events()
+
+		e.mustReconcile()
+		Expect(e.fip(familyIPv6).ServerID).To(Equal(e.serverID("a")))
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("a")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonInitial))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonInitial)))).To(Equal(1.0))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
+		events := e.events()
+		Expect(events).To(HaveLen(3)) // group, new node, member Service
+		Expect(events).NotTo(ContainElement(ContainSubstring("outside the controller")))
+	})
+
+	It("TestPendingMoveSurvivesFailedStatusWrite", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4)
+		flaky := &flakyStatusClient{Client: cachedClient}
+		flaky.failures.Store(1)
+		e.r.Client = flaky
+
+		_, err := e.reconcile()
+		Expect(err).To(MatchError(ContainSubstring("status write failed")))
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("a")))
+		Expect(e.get().Status.Node).To(BeEmpty())
+		Expect(e.events()).To(ContainElement(ContainSubstring("Moved")))
+
+		e.mustReconcile()
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("a")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonInitial))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonInitial)))).To(Equal(1.0))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
+		Expect(e.events()).To(BeEmpty())
+	})
+
+	It("TestInvalidHealthCheckReportedOnChange", func() {
+		e := newEnv([]string{"a"}, "a")
+		name := e.group + "-hc"
+		e.addService(name, map[string]string{probe.HealthCheckAnnotation: "ftp://:1"}, "a")
+		e.createNamedGroup(name, v1alpha1.DeletionPolicyRetain, familyIPv4)
+		for range 3 {
+			_, err := e.reconcileGroup(name)
+			Expect(err).NotTo(HaveOccurred())
+			e.clock.Advance(time.Second)
+		}
+		var invalid int
+		for _, ev := range e.events() {
+			if strings.Contains(ev, "InvalidHealthCheck") {
+				invalid++
+			}
+		}
+		Expect(invalid).To(Equal(1))
 	})
 })

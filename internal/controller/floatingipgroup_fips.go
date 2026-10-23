@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -111,7 +112,11 @@ func (h holder) alignedNode(fips []groupFIP) string {
 
 // findHolder resolves the Hetzner assignment to a cluster node. When the
 // FIPs are split (an interrupted move), the node in status wins, so the move
-// is completed or undone as one unit.
+// is completed or undone as one unit. This also covers a leader change in the
+// middle of a move: the new leader has no pending move in memory, but finds
+// the split through Hetzner and repairs it from status.node. Only an
+// interrupted initial assignment (status.node still empty) is then recorded
+// as External, because nothing tells the new leader it was its predecessor.
 func (r *FloatingIPGroupReconciler) findHolder(ctx context.Context, group *v1alpha1.FloatingIPGroup, snap *snapshot,
 	fips []groupFIP) (holder, error) {
 	var h holder
@@ -183,7 +188,7 @@ func (r *FloatingIPGroupReconciler) assign(ctx context.Context, fips []groupFIP,
 		return nil
 	}
 	for i := range fips {
-		fresh, err := r.hcache().refreshFIP(ctx, fips[i].fip.Name)
+		fresh, err := r.hcache().refreshFIP(ctx, fips[i].fip.ID)
 		if err != nil {
 			return err
 		}
@@ -192,17 +197,24 @@ func (r *FloatingIPGroupReconciler) assign(ctx context.Context, fips []groupFIP,
 		}
 		fips[i].fip = fresh
 	}
+	// Issue every assignment before waiting, so both families switch together.
+	var ids []int64
+	for _, f := range fips {
+		if f.fip.ServerID != server {
+			ids = append(ids, f.fip.ID)
+		}
+	}
+	done, err := r.Hetzner.AssignAll(ctx, server, ids)
 	for i := range fips {
-		if fips[i].fip.ServerID == server {
-			continue
+		if slices.Contains(done, fips[i].fip.ID) {
+			cp := *fips[i].fip
+			cp.ServerID = server
+			r.hcache().putFIP(&cp)
+			fips[i].fip = &cp
 		}
-		if err := r.Hetzner.Assign(ctx, fips[i].fip.ID, server); err != nil {
-			return fmt.Errorf("assign floating IP %s to server %d: %w", fips[i].fip.Name, server, err)
-		}
-		cp := *fips[i].fip
-		cp.ServerID = server
-		r.hcache().putFIP(&cp)
-		fips[i].fip = &cp
+	}
+	if err != nil {
+		return fmt.Errorf("assign floating IPs to server %d: %w", server, err)
 	}
 	return nil
 }

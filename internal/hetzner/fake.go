@@ -1,10 +1,13 @@
 package hetzner
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
+	"slices"
 	"sync"
 )
 
@@ -17,6 +20,9 @@ const (
 	MethodDelete           = "Delete"
 	MethodServer           = "Server"
 	MethodServerByName     = "ServerByName"
+	MethodGetFloatingIP    = "GetFloatingIP"
+	MethodAllFloatingIPs   = "AllFloatingIPs"
+	MethodAllServers       = "AllServers"
 )
 
 const zoneEUCentral = "eu-central"
@@ -163,9 +169,71 @@ func (f *Fake) CreateFloatingIP(_ context.Context, opts CreateOpts) (*FloatingIP
 	return clone(fip), nil
 }
 
+func (f *Fake) GetFloatingIP(_ context.Context, id int64) (*FloatingIP, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.enter(MethodGetFloatingIP); err != nil {
+		return nil, err
+	}
+	fip, ok := f.fips[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return clone(fip), nil
+}
+
+func (f *Fake) AllFloatingIPs(_ context.Context) ([]FloatingIP, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.enter(MethodAllFloatingIPs); err != nil {
+		return nil, err
+	}
+	out := make([]FloatingIP, 0, len(f.fips))
+	for _, fip := range f.fips {
+		out = append(out, *clone(fip))
+	}
+	slices.SortFunc(out, func(a, b FloatingIP) int { return cmp.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+func (f *Fake) AllServers(_ context.Context) ([]Server, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.enter(MethodAllServers); err != nil {
+		return nil, err
+	}
+	out := make([]Server, 0, len(f.servers))
+	for _, s := range f.servers {
+		out = append(out, *s)
+	}
+	slices.SortFunc(out, func(a, b Server) int { return cmp.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+// AssignAll counts one MethodAssign call per Floating IP.
+func (f *Fake) AssignAll(_ context.Context, serverID int64, fipIDs []int64) ([]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var done []int64
+	var errs []error
+	for _, id := range fipIDs {
+		if err := f.assign(id, serverID); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		done = append(done, id)
+	}
+	return done, errors.Join(errs...)
+}
+
 func (f *Fake) Assign(_ context.Context, fipID, serverID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	return f.assign(fipID, serverID)
+}
+
+// assign is one counted assignment. Callers hold f.mu.
+func (f *Fake) assign(fipID, serverID int64) error {
 	if err := f.enter(MethodAssign); err != nil {
 		return err
 	}

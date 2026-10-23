@@ -25,6 +25,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -44,7 +45,8 @@ func (r *FloatingIPGroupReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(predicate.Funcs{UpdateFunc: nodeChanged})).
 		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(groupOfService)).
 		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(r.groupOfSlice)).
-		Named("floatingipgroup")
+		Named("floatingipgroup").
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.MaxConcurrentReconciles})
 	if r.ProbeEvents != nil {
 		b = b.WatchesRawSource(source.Channel(r.ProbeEvents, &handler.EnqueueRequestForObject{}))
 	}
