@@ -37,6 +37,12 @@ func (r *FloatingIPGroupReconciler) resolveFIPs(ctx context.Context, group *v1al
 		name := fips[i].ref.Name
 		f, err := r.hcache().fip(ctx, name)
 		if errors.Is(err, hetzner.ErrNotFound) {
+			// The snapshot can be older than a Floating IP created since.
+			if f, err = r.Hetzner.FloatingIPByName(ctx, name); err == nil {
+				r.hcache().putFIP(f)
+			}
+		}
+		if errors.Is(err, hetzner.ErrNotFound) {
 			f, err = r.Hetzner.CreateFloatingIP(ctx, hetzner.CreateOpts{
 				Name: name, Type: fips[i].family, HomeLocation: group.Spec.Location, Labels: r.ownLabels(group),
 			})
@@ -87,6 +93,25 @@ func (r *FloatingIPGroupReconciler) ensureLabels(ctx context.Context, group *v1a
 		r.hcache().putFIP(&cp)
 		fips[i].fip = &cp
 		r.Recorder.Eventf(group, corev1.EventTypeNormal, "Adopted", "Adopted Floating IP %s (%s)", f.Name, f.IP)
+	}
+	return nil
+}
+
+// ensureProtection enables delete protection on the group's Floating IPs.
+// Callers label them first, so every one carries this cluster and group.
+func (r *FloatingIPGroupReconciler) ensureProtection(ctx context.Context, fips []groupFIP) error {
+	for i := range fips {
+		f := fips[i].fip
+		if f.DeleteProtected {
+			continue
+		}
+		if err := r.Hetzner.SetDeleteProtection(ctx, f.ID, true); err != nil {
+			return fmt.Errorf("protect floating IP %s: %w", f.Name, err)
+		}
+		cp := *f
+		cp.DeleteProtected = true
+		r.hcache().putFIP(&cp)
+		fips[i].fip = &cp
 	}
 	return nil
 }

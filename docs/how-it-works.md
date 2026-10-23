@@ -30,8 +30,10 @@ Services join a group with the annotation `fip-announcer.inocea.de/group`;
 several Services (TCP and UDP, different ports) may share one group.
 
 The controller adopts a Floating IP by name or creates it (home location from
-`spec.location`, delete protection on). It labels the IPs it manages with
-`fip-announcer.inocea.de/cluster-id` and `fip-announcer.inocea.de/group`.
+`spec.location`). It looks the name up in Hetzner before creating, even when
+its cached list does not have it yet. It labels the IPs it manages with
+`fip-announcer.inocea.de/cluster-id` and `fip-announcer.inocea.de/group` and
+keeps delete protection on for every one of them, adopted or created.
 
 ## Eligible nodes
 

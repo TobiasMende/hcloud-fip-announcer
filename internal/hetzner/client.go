@@ -43,15 +43,16 @@ func init() {
 
 // FloatingIP is a Hetzner Floating IP.
 type FloatingIP struct {
-	ID           int64
-	Name         string
-	Type         string // ipv4 or ipv6
-	IP           net.IP
-	Network      *net.IPNet
-	ServerID     int64 // 0 means unassigned
-	Labels       map[string]string
-	HomeLocation string
-	NetworkZone  string // network zone of the home location
+	ID              int64
+	Name            string
+	Type            string // ipv4 or ipv6
+	IP              net.IP
+	Network         *net.IPNet
+	ServerID        int64 // 0 means unassigned
+	Labels          map[string]string
+	HomeLocation    string
+	NetworkZone     string // network zone of the home location
+	DeleteProtected bool
 }
 
 // Server is a Hetzner server.
@@ -84,6 +85,7 @@ type Client interface {
 	// returns the IDs that ended up on the server.
 	AssignAll(ctx context.Context, serverID int64, fipIDs []int64) ([]int64, error)
 	SetLabels(ctx context.Context, fipID int64, labels map[string]string) error
+	SetDeleteProtection(ctx context.Context, fipID int64, on bool) error
 	Delete(ctx context.Context, fipID int64) error
 	Server(ctx context.Context, id int64) (*Server, error)
 	ServerByName(ctx context.Context, name string) (*Server, error)
@@ -296,6 +298,10 @@ func (c *client) SetLabels(ctx context.Context, fipID int64, labels map[string]s
 	return notFound(err)
 }
 
+func (c *client) SetDeleteProtection(ctx context.Context, fipID int64, on bool) error {
+	return notFound(c.setDeleteProtection(ctx, &hcloud.FloatingIP{ID: fipID}, on))
+}
+
 // Delete disables delete protection, unassigns and deletes the Floating IP.
 // A Floating IP that is already gone is not an error.
 func (c *client) Delete(ctx context.Context, fipID int64) error {
@@ -396,6 +402,8 @@ func convertFIP(f *hcloud.FloatingIP) *FloatingIP {
 		IP:      f.IP,
 		Network: f.Network,
 		Labels:  f.Labels,
+
+		DeleteProtected: f.Protection.Delete,
 	}
 	if f.Server != nil {
 		out.ServerID = f.Server.ID

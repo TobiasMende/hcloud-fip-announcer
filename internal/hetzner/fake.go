@@ -13,16 +13,17 @@ import (
 
 // Method names used as keys for SetErr and CallCount.
 const (
-	MethodFloatingIPByName = "FloatingIPByName"
-	MethodCreateFloatingIP = "CreateFloatingIP"
-	MethodAssign           = "Assign"
-	MethodSetLabels        = "SetLabels"
-	MethodDelete           = "Delete"
-	MethodServer           = "Server"
-	MethodServerByName     = "ServerByName"
-	MethodGetFloatingIP    = "GetFloatingIP"
-	MethodAllFloatingIPs   = "AllFloatingIPs"
-	MethodAllServers       = "AllServers"
+	MethodFloatingIPByName    = "FloatingIPByName"
+	MethodCreateFloatingIP    = "CreateFloatingIP"
+	MethodAssign              = "Assign"
+	MethodSetLabels           = "SetLabels"
+	MethodSetDeleteProtection = "SetDeleteProtection"
+	MethodDelete              = "Delete"
+	MethodServer              = "Server"
+	MethodServerByName        = "ServerByName"
+	MethodGetFloatingIP       = "GetFloatingIP"
+	MethodAllFloatingIPs      = "AllFloatingIPs"
+	MethodAllServers          = "AllServers"
 )
 
 const zoneEUCentral = "eu-central"
@@ -156,6 +157,8 @@ func (f *Fake) CreateFloatingIP(_ context.Context, opts CreateOpts) (*FloatingIP
 		Labels:       maps.Clone(opts.Labels),
 		HomeLocation: opts.HomeLocation,
 		NetworkZone:  locationZones[opts.HomeLocation],
+
+		DeleteProtected: true,
 	}
 	n := byte(f.nextID % 256)
 	if opts.Type == "ipv6" {
@@ -259,6 +262,20 @@ func (f *Fake) SetLabels(_ context.Context, fipID int64, labels map[string]strin
 		return ErrNotFound
 	}
 	fip.Labels = maps.Clone(labels)
+	return nil
+}
+
+func (f *Fake) SetDeleteProtection(_ context.Context, fipID int64, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.enter(MethodSetDeleteProtection); err != nil {
+		return err
+	}
+	fip, ok := f.fips[fipID]
+	if !ok {
+		return ErrNotFound
+	}
+	fip.DeleteProtected = on
 	return nil
 }
 

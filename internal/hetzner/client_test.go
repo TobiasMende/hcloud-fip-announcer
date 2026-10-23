@@ -591,3 +591,52 @@ func TestFakeListsAndAssignAll(t *testing.T) {
 		t.Fatalf("want ErrNotFound, got %v", err)
 	}
 }
+
+func TestDeleteProtectionConvertedAndSet(t *testing.T) {
+	var body map[string]any
+	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == fipPath:
+			writeJSON(w, 200, map[string]any{keyFIP: fipJSON(0, true)})
+		case r.Method == http.MethodPost && r.URL.Path == fipPath+"/actions/change_protection":
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writeJSON(w, 201, map[string]any{keyAction: okAction(1)})
+		default:
+			return false
+		}
+		return true
+	})
+	c := a.client()
+	f, err := c.GetFloatingIP(context.Background(), fipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.DeleteProtected {
+		t.Fatal("delete protection not converted")
+	}
+	if err := c.SetDeleteProtection(context.Background(), fipID, true); err != nil {
+		t.Fatal(err)
+	}
+	if body["delete"] != true {
+		t.Fatalf("protection body %v", body)
+	}
+}
+
+func TestFakeDeleteProtection(t *testing.T) {
+	ctx := context.Background()
+	f := NewFake()
+	created, err := f.CreateFloatingIP(ctx, CreateOpts{Name: "x", Type: typeV4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created.DeleteProtected {
+		t.Fatal("created Floating IPs are protected")
+	}
+	f.AddFloatingIP(FloatingIP{ID: 7, Name: "y", Type: typeV4})
+	if err := f.SetDeleteProtection(ctx, 7, true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.FloatingIP(7).DeleteProtected || f.CallCount(MethodSetDeleteProtection) != 1 {
+		t.Fatalf("got %+v, calls %d", f.FloatingIP(7), f.CallCount(MethodSetDeleteProtection))
+	}
+}

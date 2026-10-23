@@ -484,6 +484,40 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		Expect(e.events()).To(ContainElement(ContainSubstring("Created")))
 	})
 
+	It("TestSnapshotMissLooksUpByNameBeforeCreating", func() {
+		e := newEnv([]string{"a"}, "a")
+		warm := e.group + "-warm"
+		e.createNamedGroup(warm, v1alpha1.DeletionPolicyRetain, familyIPv4)
+		_, err := e.reconcileGroup(warm)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(e.fake.CallCount(hetzner.MethodCreateFloatingIP)).To(Equal(1))
+		Expect(e.fake.CallCount(hetzner.MethodFloatingIPByName)).To(Equal(1))
+
+		By("a Floating IP created after the last poll is adopted, not duplicated")
+		e.addFIP(familyIPv4, 0, nil)
+		e.createGroup(familyIPv4)
+		e.mustReconcile()
+		Expect(e.fake.CallCount(hetzner.MethodFloatingIPByName)).To(Equal(2))
+		Expect(e.fake.CallCount(hetzner.MethodCreateFloatingIP)).To(Equal(1))
+		Expect(e.fip(familyIPv4).Labels).To(Equal(e.ourLabels()))
+	})
+
+	It("TestEnsuresDeleteProtection", func() {
+		e := newEnv([]string{"a"}, "a")
+		e.addFIP(familyIPv4, 0, nil)
+		e.addFIP(familyIPv6, 0, e.ourLabels())
+		e.createGroup(familyIPv4, familyIPv6)
+
+		e.mustReconcile()
+		Expect(e.fip(familyIPv4).DeleteProtected).To(BeTrue(), "adopted")
+		Expect(e.fip(familyIPv6).DeleteProtected).To(BeTrue(), "already labelled")
+		Expect(e.fake.CallCount(hetzner.MethodSetDeleteProtection)).To(Equal(2))
+
+		e.clock.Advance(time.Minute)
+		e.mustReconcile()
+		Expect(e.fake.CallCount(hetzner.MethodSetDeleteProtection)).To(Equal(2))
+	})
+
 	It("TestRefusesFIPLabelledForOtherCluster", func() {
 		e := newEnv([]string{"a"}, "a")
 		e.addFIP(familyIPv4, 0, map[string]string{clusterIDLabel: "other", groupLabel: e.group})
@@ -790,6 +824,9 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		By("the first round costs one list of each for both groups and all nodes")
 		both()
 		Expect(lists()).To(Equal(2))
+		// every Floating IP is created on a snapshot miss after one lookup by name
+		Expect(e.fake.CallCount(hetzner.MethodFloatingIPByName)).To(Equal(4))
+		createReads := perItemReads()
 
 		By("reconciles within the poll interval read nothing")
 		for range 5 {
@@ -803,7 +840,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		both()
 		both()
 		Expect(lists()).To(Equal(4))
-		Expect(perItemReads()).To(BeZero())
+		Expect(perItemReads()).To(Equal(createReads))
 
 		By("a move re-reads its FIPs by ID right before assigning")
 		e.cordon()

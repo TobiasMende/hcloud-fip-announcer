@@ -213,6 +213,9 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 	if err := r.ensureLabels(ctx, group, fips); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.ensureProtection(ctx, fips); err != nil {
+		return ctrl.Result{}, err
+	}
 	if len(snap.services) == 0 && group.Spec.NodeSelector == nil {
 		return r.finish(ctx, group, outcome{fips: fips, holder: h.alignedNode(fips), reason: reasonNoMembers,
 			message: "No member Services and no nodeSelector; the Floating IPs are not placed"})
