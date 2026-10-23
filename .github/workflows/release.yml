@@ -36,7 +36,6 @@ jobs:
 
       - name: Require tag on main
         run: |
-          git fetch --no-tags origin main
           git merge-base --is-ancestor HEAD origin/main \
             || { echo "tag $TAG is not reachable from origin/main"; exit 1; }
         env:
