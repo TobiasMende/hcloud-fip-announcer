@@ -42,8 +42,12 @@ type hetznerCache struct {
 	// refreshMu makes concurrent reconciles share one refresh.
 	refreshMu sync.Mutex
 
-	mu          sync.Mutex
-	fips        map[string]hetzner.FloatingIP
+	mu   sync.Mutex
+	fips map[string]hetzner.FloatingIP
+	// gen counts putFIP writes; fipGen is the write generation per entry, so
+	// a refresh keeps entries written while its list was in flight.
+	gen         uint64
+	fipGen      map[string]uint64
 	servers     map[int64]hetzner.Server
 	serverNames map[string]int64
 	at          time.Time // last successful refresh, zero before the first
@@ -72,6 +76,9 @@ func (c *hetznerCache) refresh(ctx context.Context) error {
 	if blocked {
 		return failure
 	}
+	c.mu.Lock()
+	startGen := c.gen
+	c.mu.Unlock()
 
 	fips, err := c.api.AllFloatingIPs(ctx)
 	var servers []hetzner.Server
@@ -80,15 +87,27 @@ func (c *hetznerCache) refresh(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err != nil && ctx.Err() != nil {
+		// the caller gave up; that says nothing about the Hetzner API
+		return fmt.Errorf("refresh Hetzner snapshot: %w", err)
+	}
 	if err != nil {
 		c.failedAt, c.failure = c.now(), fmt.Errorf("refresh Hetzner snapshot: %w", err)
 		logf.FromContext(ctx).Error(err, "Hetzner refresh failed; keeping the last snapshot", "retryIn", refreshBackoff)
 		return c.failure
 	}
-	c.fips = make(map[string]hetzner.FloatingIP, len(fips))
+	listed := make(map[string]hetzner.FloatingIP, len(fips))
 	for _, f := range fips {
-		c.fips[f.Name] = f
+		listed[f.Name] = f
 	}
+	gens := map[string]uint64{}
+	for name, g := range c.fipGen {
+		if g > startGen {
+			listed[name] = c.fips[name]
+			gens[name] = g
+		}
+	}
+	c.fips, c.fipGen = listed, gens
 	c.servers = make(map[int64]hetzner.Server, len(servers))
 	c.serverNames = make(map[string]int64, len(servers))
 	for _, s := range servers {
@@ -133,8 +152,11 @@ func (c *hetznerCache) putFIP(f *hetzner.FloatingIP) {
 	defer c.mu.Unlock()
 	if c.fips == nil {
 		c.fips = map[string]hetzner.FloatingIP{}
+		c.fipGen = map[string]uint64{}
 	}
+	c.gen++
 	c.fips[f.Name] = *cloneFIP(f)
+	c.fipGen[f.Name] = c.gen
 }
 
 func (c *hetznerCache) server(_ context.Context, id int64) (*hetzner.Server, error) {

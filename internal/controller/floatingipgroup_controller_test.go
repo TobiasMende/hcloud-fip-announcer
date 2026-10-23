@@ -896,7 +896,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 	It("TestInvalidHealthCheckReportedOnChange", func() {
 		e := newEnv([]string{"a"}, "a")
 		name := e.group + "-hc"
-		e.addService(name, map[string]string{probe.HealthCheckAnnotation: "ftp://:1"}, "a")
+		svc := e.addService(name, map[string]string{probe.HealthCheckAnnotation: "ftp://:1"}, "a")
 		e.createNamedGroup(name, v1alpha1.DeletionPolicyRetain, familyIPv4)
 		for range 3 {
 			_, err := e.reconcileGroup(name)
@@ -910,5 +910,32 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 			}
 		}
 		Expect(invalid).To(Equal(1))
+
+		By("a Service that is no longer a member is forgotten")
+		Expect(k8sClient.Delete(context.Background(), svc)).To(Succeed())
+		Eventually(func() bool {
+			return apierrors.IsNotFound(cachedClient.Get(context.Background(), client.ObjectKeyFromObject(svc), &corev1.Service{}))
+		}).Should(BeTrue())
+		_, err := e.reconcileGroup(name)
+		Expect(err).NotTo(HaveOccurred())
+		e.r.mu.Lock()
+		defer e.r.mu.Unlock()
+		Expect(e.r.healthErrs).To(BeEmpty())
+	})
+
+	It("TestHolderChangedClearsPendingMove", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4)
+		e.mustReconcile()
+		e.cordon()
+		e.moveExternally(familyIPv4, "b")
+
+		e.mustReconcile()
+
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("b")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonExternal))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonNodeCordoned)))).To(BeZero())
+		Expect(e.fake.CallCount(hetzner.MethodAssign)).To(Equal(1))
 	})
 })

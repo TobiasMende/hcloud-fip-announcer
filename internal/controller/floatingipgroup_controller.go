@@ -281,6 +281,9 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 		m := moveInfo{from: h.node, to: d.Target, reason: d.Reason, at: in.Now}
 		r.setPending(group.Name, m)
 		if err := r.assign(ctx, fips, sid); err != nil {
+			if errors.Is(err, errHolderChanged) {
+				r.clearPending(group.Name)
+			}
 			return ctrl.Result{}, err
 		}
 		r.announceMove(ctx, group, snap, fips, m)
@@ -401,6 +404,12 @@ func (r *FloatingIPGroupReconciler) forget(group string) {
 			delete(r.healthErrs, k)
 		}
 	}
+}
+
+func (r *FloatingIPGroupReconciler) clearPending(group string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.pending, group)
 }
 
 func (r *FloatingIPGroupReconciler) setPending(group string, m moveInfo) {

@@ -260,6 +260,7 @@ func (r *FloatingIPGroupReconciler) probeTargets(group string, s *snapshot) []pr
 			}
 		}
 	}
+	r.pruneHealthErrs(group, s.services)
 	out := make([]probe.Target, 0, len(byKey))
 	for _, k := range slices.SortedFunc(maps.Keys(byKey), func(a, b eligibility.NodeKey) int {
 		return strings.Compare(a.Node+"\x00"+a.Service, b.Node+"\x00"+b.Service)
@@ -267,6 +268,22 @@ func (r *FloatingIPGroupReconciler) probeTargets(group string, s *snapshot) []pr
 		out = append(out, *byKey[k])
 	}
 	return out
+}
+
+// pruneHealthErrs forgets health-check errors of Services that are no
+// longer members of the group.
+func (r *FloatingIPGroupReconciler) pruneHealthErrs(group string, members []corev1.Service) {
+	keep := map[string]bool{}
+	for _, svc := range members {
+		keep[group+"\x00"+svc.Namespace+"/"+svc.Name] = true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.healthErrs {
+		if strings.HasPrefix(k, group+"\x00") && !keep[k] {
+			delete(r.healthErrs, k)
+		}
+	}
 }
 
 // reportHealthCheck emits InvalidHealthCheck only when the error of a
