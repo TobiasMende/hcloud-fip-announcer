@@ -46,6 +46,7 @@ Cluster-wide:
 | `floatingipgroups` (fip-announcer.inocea.de) | get, list, watch, update, patch |
 | `floatingipgroups/status` | get, update, patch |
 | `floatingipgroups/finalizers` | update |
+| `tokenreviews` (authentication.k8s.io), `subjectaccessreviews` (authorization.k8s.io) | create, only with `metrics.secure: true` |
 
 In the release namespace: `leases` (coordination.k8s.io) get, list, watch,
 create, update, patch for leader election.
@@ -61,7 +62,8 @@ changes a spec.
 
 If the namespace is default-deny, the controller needs egress to DNS, the
 Hetzner API (`api.hetzner.cloud`, 443), the kube-apiserver and the health-check
-ports of the member pods, and ingress for metrics and kubelet probes. The
+ports of the member pods (in any namespace, hence `namespaceSelector: {}`),
+and ingress for metrics and kubelet probes. The
 chart prints a ready-to-adapt `NetworkPolicy` in its install notes
 (`helm get notes <release>`; source:
 [NOTES.txt](../charts/hcloud-fip-announcer/templates/NOTES.txt)).

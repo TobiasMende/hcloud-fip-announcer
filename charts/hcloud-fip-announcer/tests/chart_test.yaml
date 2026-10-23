@@ -167,3 +167,55 @@ tests:
       - equal:
           path: spec.minAvailable
           value: 1
+  - it: no PDB for a single replica
+    template: pdb.yaml
+    set:
+      replicaCount: 1
+    asserts:
+      - hasDocuments:
+          count: 0
+  - it: no token review RBAC for plain metrics
+    template: rbac.yaml
+    documentIndex: 0
+    asserts:
+      - notContains:
+          path: rules
+          content:
+            apiGroups: [authentication.k8s.io]
+            resources: [tokenreviews]
+            verbs: [create]
+  - it: token and access review RBAC for secure metrics
+    template: rbac.yaml
+    documentIndex: 0
+    set:
+      metrics.secure: true
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [authentication.k8s.io]
+            resources: [tokenreviews]
+            verbs: [create]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [authorization.k8s.io]
+            resources: [subjectaccessreviews]
+            verbs: [create]
+  - it: runs on control-plane nodes with the documented values
+    template: deployment.yaml
+    set:
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            node-role.kubernetes.io/control-plane: ""
+      - equal:
+          path: spec.template.spec.tolerations[0].key
+          value: node-role.kubernetes.io/control-plane

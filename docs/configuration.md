@@ -89,7 +89,7 @@ moves to nodes with a ready local endpoint.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--cluster-id` | required | Identifies this cluster in the labels of its Floating IPs. |
+| `--cluster-id` | required | Identifies this cluster in the labels of its Floating IPs. Must be a Hetzner label value (at most 63 characters, alphanumeric at both ends, `-`, `_` or `.` in between); the controller exits otherwise. |
 | `--load-balancer-class` | `fip-announcer.inocea.de/floating-ip` | Class of the Services to handle; empty handles Services without a class. |
 | `--anti-flap` | `30s` | Minimum time between two moves of a group (not applied when the holder is cordoned or its server is gone). |
 | `--hetzner-poll-interval` | `30s` | How long Hetzner reads are cached; minimum `10s`. |
@@ -126,6 +126,7 @@ Chart: `oci://ghcr.io/tobiasmende/charts/hcloud-fip-announcer`.
 | `imagePullSecrets` | `[]` | |
 | `nameOverride`, `fullnameOverride` | `""` | |
 | `replicaCount` | `2` | One leader, the rest standby. |
+| `podDisruptionBudget.enabled`, `.minAvailable` | `true`, `1` | Only created when `replicaCount` is greater than 1. |
 | `hcloud.existingSecret` | `""` | Existing Secret holding the token. |
 | `hcloud.existingSecretKey` | `token` | Key in that Secret. |
 | `hcloud.token` | `""` | Create a Secret from this value (project-wide read/write token). One of the two is required. |
@@ -140,15 +141,14 @@ Chart: `oci://ghcr.io/tobiasmende/charts/hcloud-fip-announcer`.
 | `controller.leaderElection.retryPeriod` | `1s` | |
 | `controller.extraArgs` | `[]` | Extra container args. |
 | `metrics.port` | `8080` | |
-| `metrics.secure` | `false` | Plain HTTP so Prometheus can scrape without token auth. |
+| `metrics.secure` | `false` | Plain HTTP so Prometheus can scrape without token auth. `true` serves HTTPS with authn/authz; the chart then grants `create` on `tokenreviews` and `subjectaccessreviews`, and scrapers need `get` on the non-resource URL `/metrics`. |
 | `healthProbePort` | `8081` | |
 | `serviceAccount.create`, `.name`, `.annotations` | `true`, `""`, `{}` | |
 | `podAnnotations`, `podLabels` | `{}` | |
 | `priorityClassName` | `""` | Consider `system-cluster-critical`. |
 | `resources` | requests 20m CPU / 64Mi, limit 128Mi memory | |
-| `nodeSelector`, `tolerations` | `{}`, `[]` | |
+| `nodeSelector`, `tolerations` | `{}`, `[]` | Recommended: control-plane nodes, see below. |
 | `affinity` | `{}` | Replaces the default soft anti-affinity on `kubernetes.io/hostname`. |
-| `podDisruptionBudget.enabled`, `.minAvailable` | `true`, `1` | |
 | `serviceMonitor.enabled`, `.interval`, `.labels` | `false`, `30s`, `{}` | Prometheus Operator `ServiceMonitor`. |
 | `prometheusRule.enabled`, `.labels` | `false`, `{}` | Alert rules (also in [examples/alerts.rules.yaml](../examples/alerts.rules.yaml)). |
 | `dashboard.enabled` | `false` | ConfigMap with the Grafana dashboard for the sidecar. |
@@ -156,6 +156,24 @@ Chart: `oci://ghcr.io/tobiasmende/charts/hcloud-fip-announcer`.
 | `dashboard.annotations` | `{}` | |
 | `dashboard.grafanaOperator.enabled` | `false` | Create a `GrafanaDashboard` for grafana-operator v5. |
 | `dashboard.grafanaOperator.instanceSelector` | `matchLabels: {dashboards: grafana}` | |
+
+### Running on control-plane nodes (recommended)
+
+The controller probes from the leader pod. If the leader runs on the node that
+holds the Floating IPs, losing that node costs a leader election on top of the
+failover. Control-plane nodes never hold a Floating IP unless a group's
+`nodeSelector` selects them, so running the controller there keeps the two
+apart. It is not the default because not every cluster schedules workloads on
+its control planes:
+
+```yaml
+nodeSelector:
+  node-role.kubernetes.io/control-plane: ""
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+```
 
 ## Metrics
 

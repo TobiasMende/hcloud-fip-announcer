@@ -1,4 +1,6 @@
 # Required: identifies this cluster in the labels of managed Floating IPs.
+# Must be a Hetzner label value: at most 63 characters, alphanumeric at both
+# ends, '-', '_' or '.' in between.
 clusterId: ""
 
 image:
@@ -11,6 +13,7 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# The PodDisruptionBudget is only created for more than one replica.
 replicaCount: 2
 
 hcloud:
@@ -37,6 +40,8 @@ controller:
 metrics:
   port: 8080
   # Plain HTTP so Prometheus or Alloy can scrape without token auth.
+  # true serves HTTPS with authn/authz; the chart then grants the token and
+  # access review permissions this needs.
   secure: false
 
 healthProbePort: 8081
@@ -59,6 +64,16 @@ resources:
   limits:
     memory: 128Mi
 
+# Recommended: run the controller on control-plane nodes. They never hold a
+# Floating IP (unless a group's nodeSelector selects them), so losing the
+# holder node never also costs the leader. Not the default because not every
+# cluster lets workloads onto its control planes.
+#   nodeSelector:
+#     node-role.kubernetes.io/control-plane: ""
+#   tolerations:
+#     - key: node-role.kubernetes.io/control-plane
+#       operator: Exists
+#       effect: NoSchedule
 nodeSelector: {}
 tolerations: []
 # Replaces the default soft anti-affinity on kubernetes.io/hostname when set.

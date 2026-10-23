@@ -29,6 +29,14 @@ rules:
   - apiGroups: [fip-announcer.inocea.de]
     resources: [floatingipgroups/finalizers]
     verbs: [update]
+  {{- if .Values.metrics.secure }}
+  - apiGroups: [authentication.k8s.io]
+    resources: [tokenreviews]
+    verbs: [create]
+  - apiGroups: [authorization.k8s.io]
+    resources: [subjectaccessreviews]
+    verbs: [create]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

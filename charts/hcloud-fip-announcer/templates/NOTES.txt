@@ -31,8 +31,7 @@ spec:
         - ipBlock: {cidr: <apiserver-ip>/32}
       ports:
         - {port: 6443, protocol: TCP}
-    - to:                         # health checks against pod IPs: replace with
-        - podSelector: {}         # the selector and ports of your member Services
-          namespaceSelector: {}
-      ports:
-        - {port: 8080, protocol: TCP}
+    - to:                         # health checks against member pods; they may run
+        - namespaceSelector: {}   # in any namespace, so this allows all of them.
+      ports:                      # Narrow it to your namespaces if you can, and
+        - {port: 8080, protocol: TCP}  # list the health-check ports of your Services
