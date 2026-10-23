@@ -30,6 +30,8 @@ const (
 	keyZone         = "network_zone"
 	typeV4          = "ipv4"
 	locFSN          = "fsn1"
+	keyStatus       = "status"
+	keyLocation     = "location"
 )
 
 type apiServer struct {
@@ -315,8 +317,8 @@ func TestServerByName(t *testing.T) {
 		servers := []any{}
 		if r.URL.Query().Get(keyName) == "w1" {
 			servers = append(servers, map[string]any{
-				"id": 9, keyName: "w1", "status": "off",
-				"location": map[string]any{keyName: locFSN, keyZone: zone},
+				"id": 9, keyName: "w1", keyStatus: "off",
+				keyLocation: map[string]any{keyName: locFSN, keyZone: zone},
 			})
 		}
 		writeJSON(w, 200, map[string]any{"servers": servers})

@@ -38,6 +38,7 @@ import (
 
 	fipannouncerv1alpha1 "github.com/TobiasMende/hcloud-fip-announcer/api/v1alpha1"
 	"github.com/TobiasMende/hcloud-fip-announcer/internal/controller"
+	"github.com/TobiasMende/hcloud-fip-announcer/internal/hetzner"
 	"github.com/TobiasMende/hcloud-fip-announcer/internal/probe"
 	// +kubebuilder:scaffold:imports
 )
@@ -66,6 +67,8 @@ func main() {
 	var enableHTTP2 bool
 	var leaseDuration, renewDeadline, retryPeriod, probeInterval time.Duration
 	var probeFailureThreshold int
+	var clusterID, loadBalancerClass string
+	var antiFlap, hetznerPollInterval time.Duration
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -96,6 +99,14 @@ func main() {
 		"Interval between active health probes (also the per-probe timeout).")
 	flag.IntVar(&probeFailureThreshold, "probe-failure-threshold", 3,
 		"Consecutive probe failures before a target counts as failing.")
+	flag.StringVar(&clusterID, "cluster-id", "",
+		"Required. Identifies this cluster in the labels of its Hetzner Floating IPs.")
+	flag.StringVar(&loadBalancerClass, "load-balancer-class", "fip-announcer.inocea.de/floating-ip",
+		"loadBalancerClass of the Services to handle; empty handles Services without a class.")
+	flag.DurationVar(&antiFlap, "anti-flap", 30*time.Second,
+		"Minimum time between two moves of a group, unless the holder is cordoned or its server is gone.")
+	flag.DurationVar(&hetznerPollInterval, "hetzner-poll-interval", 30*time.Second,
+		"How long Hetzner reads are cached; Floating IPs are also re-read right before every move.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -110,6 +121,23 @@ func main() {
 	}
 	if probeFailureThreshold < 1 {
 		setupLog.Error(nil, "--probe-failure-threshold must be at least 1", "value", probeFailureThreshold)
+		os.Exit(1)
+	}
+	if clusterID == "" {
+		setupLog.Error(nil, "--cluster-id is required")
+		os.Exit(1)
+	}
+	if antiFlap < 0 {
+		setupLog.Error(nil, "--anti-flap must not be negative", "value", antiFlap)
+		os.Exit(1)
+	}
+	if hetznerPollInterval <= 0 {
+		setupLog.Error(nil, "--hetzner-poll-interval must be greater than 0", "value", hetznerPollInterval)
+		os.Exit(1)
+	}
+	hcloudToken := os.Getenv("HCLOUD_TOKEN")
+	if hcloudToken == "" {
+		setupLog.Error(nil, "environment variable HCLOUD_TOKEN is required")
 		os.Exit(1)
 	}
 
@@ -167,11 +195,9 @@ func main() {
 	// If the certificate is not specified, controller-runtime will automatically
 	// generate self-signed certificates for the metrics server. While convenient for development and testing,
 	// this setup is not recommended for production.
-	//
-	// TODO(user): If you enable certManager, uncomment the following lines:
-	// - [METRICS-WITH-CERTS] at config/default/kustomization.yaml to generate and use certificates
-	// managed by cert-manager for the metrics server.
-	// - [PROMETHEUS-WITH-CERTS] at config/prometheus/kustomization.yaml for TLS certification.
+	// To use cert-manager certificates, enable [METRICS-WITH-CERTS] in
+	// config/default/kustomization.yaml and [PROMETHEUS-WITH-CERTS] in
+	// config/prometheus/kustomization.yaml.
 	if len(metricsCertPath) > 0 {
 		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
 			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
@@ -208,16 +234,36 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.FloatingIPGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "floatingipgroup")
+	ctx := ctrl.SetupSignalHandler()
+	recorder := mgr.GetEventRecorderFor("hcloud-fip-announcer") //nolint:staticcheck // record.EventRecorder API
+	if err := (&controller.ServiceReconciler{
+		Client:   mgr.GetClient(),
+		Class:    loadBalancerClass,
+		Recorder: recorder,
+	}).SetupWithManager(ctx, mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "service")
 		os.Exit(1)
 	}
 	prober := probe.New(probeInterval, probeFailureThreshold)
 	if err := mgr.Add(prober); err != nil {
 		setupLog.Error(err, "Failed to add prober")
+		os.Exit(1)
+	}
+	if err := (&controller.FloatingIPGroupReconciler{
+		Client:       mgr.GetClient(),
+		APIReader:    mgr.GetAPIReader(),
+		Scheme:       mgr.GetScheme(),
+		Hetzner:      hetzner.New(hcloudToken),
+		Recorder:     recorder,
+		Prober:       prober,
+		ProbeEvents:  prober.Events(),
+		ClusterID:    clusterID,
+		Class:        loadBalancerClass,
+		AntiFlap:     antiFlap,
+		PollInterval: hetznerPollInterval,
+		LeaderNode:   os.Getenv("NODE_NAME"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Failed to create controller", "controller", "floatingipgroup")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
@@ -232,7 +278,7 @@ func main() {
 	}
 
 	setupLog.Info("Starting manager")
-	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "Failed to run manager")
 		os.Exit(1)
 	}

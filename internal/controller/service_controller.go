@@ -88,13 +88,19 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 }
 
 func (r *ServiceReconciler) handles(svc *corev1.Service) bool {
+	return handlesClass(svc, r.Class)
+}
+
+// handlesClass reports whether a Service is a LoadBalancer of the class; an
+// empty class matches Services without a loadBalancerClass.
+func handlesClass(svc *corev1.Service, class string) bool {
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
 		return false
 	}
-	if r.Class == "" {
+	if class == "" {
 		return svc.Spec.LoadBalancerClass == nil
 	}
-	return svc.Spec.LoadBalancerClass != nil && *svc.Spec.LoadBalancerClass == r.Class
+	return svc.Spec.LoadBalancerClass != nil && *svc.Spec.LoadBalancerClass == class
 }
 
 func (r *ServiceReconciler) desiredIngress(svc *corev1.Service, group *fipannouncerv1alpha1.FloatingIPGroup) []corev1.LoadBalancerIngress {
@@ -185,15 +191,20 @@ func ingressEqual(a, b []corev1.LoadBalancerIngress) bool {
 	return true
 }
 
-// SetupWithManager registers the "group" field index on Services and the controller.
-func (r *ServiceReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
-	err := mgr.GetFieldIndexer().IndexField(ctx, &corev1.Service{}, ServiceGroupIndex, func(o client.Object) []string {
+// IndexServiceGroup registers the ServiceGroupIndex field index on Services.
+func IndexServiceGroup(ctx context.Context, indexer client.FieldIndexer) error {
+	return indexer.IndexField(ctx, &corev1.Service{}, ServiceGroupIndex, func(o client.Object) []string {
 		if g := o.GetAnnotations()[serviceGroupAnnotation]; g != "" {
 			return []string{g}
 		}
 		return nil
 	})
-	if err != nil {
+}
+
+// SetupWithManager registers the "group" field index on Services and the controller.
+// The FloatingIPGroupReconciler relies on that index, so this runs first.
+func (r *ServiceReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
+	if err := IndexServiceGroup(ctx, mgr.GetFieldIndexer()); err != nil {
 		return err
 	}
 	return ctrl.NewControllerManagedBy(mgr).

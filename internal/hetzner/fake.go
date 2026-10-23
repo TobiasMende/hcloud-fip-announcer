@@ -19,8 +19,10 @@ const (
 	MethodServerByName     = "ServerByName"
 )
 
+const zoneEUCentral = "eu-central"
+
 var locationZones = map[string]string{
-	"fsn1": "eu-central", "nbg1": "eu-central", "hel1": "eu-central",
+	"fsn1": zoneEUCentral, "nbg1": zoneEUCentral, "hel1": zoneEUCentral,
 	"ash": "us-east", "hil": "us-west", "sin": "ap-southeast",
 }
 
@@ -69,6 +71,19 @@ func (f *Fake) FloatingIP(id int64) *FloatingIP {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return clone(f.fips[id])
+}
+
+// FloatingIPNamed returns a copy of the named Floating IP, or nil, without
+// counting a call.
+func (f *Fake) FloatingIPNamed(name string) *FloatingIP {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, fip := range f.fips {
+		if fip.Name == name {
+			return clone(fip)
+		}
+	}
+	return nil
 }
 
 // SetErr sets (or with nil clears) the injected error for a method.

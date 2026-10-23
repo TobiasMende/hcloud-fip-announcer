@@ -14,6 +14,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - nodes
   - services
   verbs:
   - get
@@ -27,12 +28,18 @@ rules:
   - get
   - patch
 - apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
   - fip-announcer.inocea.de
   resources:
   - floatingipgroups
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch
