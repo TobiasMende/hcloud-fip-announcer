@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.3.0...v0.4.0) (2026-10-24)
+
+
+### Features
+
+* clearer kubectl columns for FloatingIPGroup ([02e8c71](https://github.com/TobiasMende/hcloud-fip-announcer/commit/02e8c712e640a5b2ed988ec83fd7322abb3d39c3))
+* clearer kubectl columns for FloatingIPGroup ([6cd5ee6](https://github.com/TobiasMende/hcloud-fip-announcer/commit/6cd5ee6fd90599243370ae2c674257ceed896562))
+
 ## [0.3.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.2.0...v0.3.0) (2026-10-24)
 
 
