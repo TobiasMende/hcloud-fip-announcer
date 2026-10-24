@@ -21,11 +21,18 @@ spec:
     - jsonPath: .status.node
       name: Node
       type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.since
+      name: Last move
+      type: date
     - jsonPath: .status.reason
-      name: Reason
+      name: Move reason
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
+      priority: 1
       type: date
     name: v1alpha1
     schema:
@@ -258,7 +265,8 @@ spec:
                 - startedAt
                 type: object
               reason:
-                description: reason is why the Floating IPs are on the node.
+                description: reason is why the Floating IPs moved to the node (the
+                  last move, not the current health; see the Ready condition).
                 enum:
                 - Initial
                 - NodeCordoned
