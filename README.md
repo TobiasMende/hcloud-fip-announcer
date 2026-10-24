@@ -8,7 +8,7 @@ serve the Services using them — moved before planned maintenance (cordon),
 moved fast when a node fails (active probing). TCP and UDP, client IPs
 preserved with `externalTrafficPolicy: Local`.
 
-Status: **v0.1 — early, API `v1alpha1`.** Expect changes.
+API `v1alpha1`; breaking changes are called out in the release notes.
 
 ## Requirements
 
