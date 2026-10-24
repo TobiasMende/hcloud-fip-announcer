@@ -87,8 +87,6 @@ type Client interface {
 	SetLabels(ctx context.Context, fipID int64, labels map[string]string) error
 	SetDeleteProtection(ctx context.Context, fipID int64, on bool) error
 	Delete(ctx context.Context, fipID int64) error
-	Server(ctx context.Context, id int64) (*Server, error)
-	ServerByName(ctx context.Context, name string) (*Server, error)
 }
 
 type client struct {
@@ -331,22 +329,6 @@ func (c *client) Delete(ctx context.Context, fipID int64) error {
 		return nil
 	}
 	return err
-}
-
-func (c *client) Server(ctx context.Context, id int64) (*Server, error) {
-	s, _, err := c.api.Server.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return convertServer(s)
-}
-
-func (c *client) ServerByName(ctx context.Context, name string) (*Server, error) {
-	s, _, err := c.api.Server.GetByName(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return convertServer(s)
 }
 
 func convertServer(s *hcloud.Server) (*Server, error) {
