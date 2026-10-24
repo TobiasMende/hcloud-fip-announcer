@@ -102,7 +102,13 @@ var probeHealthy = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 	Help: "1 if the probe of a (group, node, service) target is healthy, 0 if it is failing.",
 }, []string{"group", "node", "service"})
 
-func init() { metrics.Registry.MustRegister(probeHealthy) }
+var probeDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+	Name:    "fip_announcer_probe_duration_seconds",
+	Help:    "Duration of one probe attempt of a (group, node), successful or not. A failing probe that times out lands in the top bucket.",
+	Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
+}, []string{"group", "node"})
+
+func init() { metrics.Registry.MustRegister(probeHealthy, probeDuration) }
 
 type targetKey struct {
 	group string
@@ -183,6 +189,9 @@ func (p *Prober) SetTargets(group string, targets []Target) {
 		}
 		probeHealthy.DeleteLabelValues(k.group, k.key.Node, k.key.Service)
 		delete(p.entries, k)
+		if !p.probesNode(k.group, k.key.Node) {
+			probeDuration.DeleteLabelValues(k.group, k.key.Node)
+		}
 	}
 	for k, t := range wanted {
 		if e, ok := p.entries[k]; ok {
@@ -193,6 +202,17 @@ func (p *Prober) SetTargets(group string, targets []Target) {
 		p.entries[k] = e
 		p.launch(k, e)
 	}
+}
+
+// probesNode reports whether any entry of the group still probes the node.
+// The caller holds p.mu.
+func (p *Prober) probesNode(group, node string) bool {
+	for k := range p.entries {
+		if k.group == group && k.key.Node == node {
+			return true
+		}
+	}
+	return false
 }
 
 // launch starts the goroutine of an entry once the prober is running.
@@ -239,10 +259,12 @@ func (p *Prober) loop(ctx context.Context, k targetKey, e *entry) {
 		t := e.target
 		p.mu.Unlock()
 
+		start := time.Now()
 		ok := p.probeAny(ctx, t)
 		if ctx.Err() != nil {
 			return
 		}
+		probeDuration.WithLabelValues(k.group, t.Node).Observe(time.Since(start).Seconds())
 		p.record(ctx, k, e, ok)
 
 		select {

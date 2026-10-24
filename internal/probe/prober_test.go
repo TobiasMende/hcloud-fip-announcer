@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -373,6 +374,79 @@ func TestProbeHealthyMetric(t *testing.T) {
 	if n := seriesOfGroup(t, "metric-g"); n != 0 {
 		t.Fatalf("gauge series after removal = %d, want 0", n)
 	}
+}
+
+func TestProbeDurationMetric(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	p := startProber(t)
+	p.SetTargets("dur-g", []Target{httpTarget("n1", portOf(t, srv), loopback)})
+	waitResult(t, p, key("n1"), true)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for durationSamples(t, "dur-g") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("no duration samples observed")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	p.SetTargets("dur-g", nil)
+	if n := durationSeries(t, "dur-g"); n != 0 {
+		t.Fatalf("duration series after removal = %d, want 0", n)
+	}
+}
+
+func TestProbeDurationSeriesKeptWhileNodeHasOtherService(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	defer srv.Close()
+	p := startProber(t)
+	a := httpTarget("n1", portOf(t, srv), loopback)
+	b := a
+	b.Service = "ns/other"
+	p.SetTargets("dur-shared", []Target{a, b})
+	waitResult(t, p, key("n1"), true)
+
+	p.SetTargets("dur-shared", []Target{a})
+	if n := durationSeries(t, "dur-shared"); n != 1 {
+		t.Fatalf("duration series = %d, want 1", n)
+	}
+	p.SetTargets("dur-shared", nil)
+	if n := durationSeries(t, "dur-shared"); n != 0 {
+		t.Fatalf("duration series after removal = %d, want 0", n)
+	}
+}
+
+func durationFamilies(t *testing.T, group string) []*dto.Metric {
+	t.Helper()
+	families, err := metrics.Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*dto.Metric
+	for _, f := range families {
+		if f.GetName() != "fip_announcer_probe_duration_seconds" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "group" && l.GetValue() == group {
+					out = append(out, m)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func durationSeries(t *testing.T, group string) int { return len(durationFamilies(t, group)) }
+
+func durationSamples(t *testing.T, group string) uint64 {
+	var n uint64
+	for _, m := range durationFamilies(t, group) {
+		n += m.GetHistogram().GetSampleCount()
+	}
+	return n
 }
 
 func seriesOfGroup(t *testing.T, group string) int {
