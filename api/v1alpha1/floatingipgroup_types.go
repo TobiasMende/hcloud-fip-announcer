@@ -118,7 +118,7 @@ type FloatingIPGroupStatus struct {
 	// +optional
 	Since *metav1.Time `json:"since,omitempty"`
 
-	// reason is why the Floating IPs are on the node.
+	// reason is why the Floating IPs moved to the node (the last move, not the current health; see the Ready condition).
 	// +optional
 	Reason MoveReason `json:"reason,omitempty"`
 
@@ -139,8 +139,10 @@ type FloatingIPGroupStatus struct {
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="IPv4",type=string,JSONPath=`.status.ipv4`
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.status.node`
-// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
+// +kubebuilder:printcolumn:name="Last move",type=date,JSONPath=`.status.since`
+// +kubebuilder:printcolumn:name="Move reason",type=string,JSONPath=`.status.reason`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`,priority=1
 // +kubebuilder:validation:XValidation:rule="size(self.metadata.name) <= 63",message="name must be at most 63 characters; it becomes a Hetzner label value"
 
 // FloatingIPGroup is the Schema for the floatingipgroups API

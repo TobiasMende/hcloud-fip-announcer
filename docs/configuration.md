@@ -2,8 +2,8 @@
 
 ## FloatingIPGroup
 
-Cluster-scoped, `fip-announcer.inocea.de/v1alpha1`, short columns IPv4, Node,
-Reason, Age.
+Cluster-scoped, `fip-announcer.inocea.de/v1alpha1`. `kubectl get` shows IPv4, Node,
+Ready, Last move and Move reason (Age with `-o wide`).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -26,7 +26,7 @@ Status:
 | `status.ipv4`, `status.ipv6` | Addresses of the group (for IPv6, the configured address inside the /64). |
 | `status.node` | Node currently holding the Floating IPs. |
 | `status.since` | When they arrived on that node. |
-| `status.reason` | Why: `Initial`, `NodeCordoned`, `ProbeFailed`, `EndpointsNotReady`, `NodeNotReady`, `ServerGone`, `External`. |
+| `status.reason` | Why the IPs moved to `status.node` (the last move, not the current health; see the `Ready` condition): `Initial`, `NodeCordoned`, `ProbeFailed`, `EndpointsNotReady`, `NodeNotReady`, `ServerGone`, `External`. |
 | `status.pendingMove` | A move that was started but not yet recorded: target `node`, `reason`, `startedAt`. Written before the first Hetzner assign and cleared once the move is recorded, so a new leader finishes the move with its real reason (see [Interrupted moves](how-it-works.md#interrupted-moves)). |
 | `status.conditions` | `Ready` and `Degraded`, see below. |
 
