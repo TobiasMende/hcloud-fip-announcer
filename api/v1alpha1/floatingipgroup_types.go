@@ -87,6 +87,19 @@ type FloatingIPGroupSpec struct {
 	NodeSelector *metav1.LabelSelector `json:"nodeSelector,omitempty"`
 }
 
+// PendingMove is a move of the Floating IPs that was started but not yet recorded.
+type PendingMove struct {
+	// node is the node the Floating IPs are being moved to.
+	// +kubebuilder:validation:MinLength=1
+	Node string `json:"node"`
+
+	// reason is why the move was started.
+	Reason MoveReason `json:"reason"`
+
+	// startedAt is when the move was started.
+	StartedAt metav1.Time `json:"startedAt"`
+}
+
 // FloatingIPGroupStatus defines the observed state of FloatingIPGroup.
 type FloatingIPGroupStatus struct {
 	// ipv4 is the assigned IPv4 address.
@@ -108,6 +121,11 @@ type FloatingIPGroupStatus struct {
 	// reason is why the Floating IPs are on the node.
 	// +optional
 	Reason MoveReason `json:"reason,omitempty"`
+
+	// pendingMove is a move that was started but not yet recorded, so another
+	// leader can finish it with its real reason.
+	// +optional
+	PendingMove *PendingMove `json:"pendingMove,omitempty"`
 
 	// conditions represent the current state of the FloatingIPGroup (Ready, Degraded).
 	// +listType=map

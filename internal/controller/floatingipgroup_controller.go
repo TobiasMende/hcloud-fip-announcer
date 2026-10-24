@@ -26,6 +26,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -58,6 +59,7 @@ const (
 	reasonNoMembers        = "NoMembers"
 
 	defaultReconcileTimeout = 30 * time.Second
+	pendingMoveMaxAge       = 10 * time.Minute
 )
 
 // errHolderChanged means the Hetzner holder read right before a move differs
@@ -101,8 +103,6 @@ type FloatingIPGroupReconciler struct {
 	cache     *hetznerCache
 
 	mu sync.Mutex
-	// pending holds moves whose status write has not succeeded yet.
-	pending map[string]moveInfo
 	// assignments holds the assignment metric series last set per group.
 	assignments map[string][][3]string
 	// healthErrs holds the last invalid health-check message per Service.
@@ -110,10 +110,9 @@ type FloatingIPGroupReconciler struct {
 }
 
 type moveInfo struct {
-	from, to  string
-	reason    v1alpha1.MoveReason
-	at        time.Time
-	announced bool
+	from, to string
+	reason   v1alpha1.MoveReason
+	at       time.Time
 }
 
 // +kubebuilder:rbac:groups=fip-announcer.inocea.de,resources=floatingipgroups,verbs=get;list;watch;update;patch
@@ -175,13 +174,17 @@ type outcome struct {
 	holder   string // node every FIP is on, for the assignment metric
 	// record sets status node, reason and since when they differ, or always
 	// with moved; nil keeps them.
-	record   *moveInfo
-	moved    bool
-	ready    bool
-	reason   string
-	message  string
-	degraded bool
-	requeue  time.Duration
+	record *moveInfo
+	moved  bool
+	// announce reports record once it is written.
+	announce    bool
+	snap        *snapshot
+	keepPending bool
+	ready       bool
+	reason      string
+	message     string
+	degraded    bool
+	requeue     time.Duration
 }
 
 func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.FloatingIPGroup) (ctrl.Result, error) {
@@ -200,7 +203,8 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 	}
 	r.Prober.SetTargets(group.Name, r.probeTargets(group.Name, snap))
 
-	h, err := r.findHolder(ctx, group, snap, fips)
+	pending := r.activePending(group)
+	h, err := r.findHolder(ctx, group, snap, fips, pending)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -242,6 +246,10 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 	if group.Status.Since != nil {
 		in.LastMove = group.Status.Since.Time
 	}
+	pendingHere := pending != nil && h.node == pending.Node
+	if pendingHere {
+		in.LastMove = pending.StartedAt.Time
+	}
 	holderReason, known := reasons[h.node]
 	holderEligible := known && holderReason == ""
 	if h.node != "" && !holderEligible {
@@ -254,7 +262,7 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 		in.HolderServerGone = h.serverGone || h.nodeGone
 	}
 
-	out := outcome{fips: fips, eligible: len(eligible)}
+	out := outcome{fips: fips, eligible: len(eligible), snap: snap}
 	switch d := placement.Decide(in); d.Action {
 	case placement.Degraded:
 		out.holder = h.alignedNode(fips)
@@ -268,61 +276,65 @@ func (r *FloatingIPGroupReconciler) sync(ctx context.Context, group *v1alpha1.Fl
 			out.requeue = r.AntiFlap - in.Now.Sub(in.LastMove)
 			break
 		}
-		if err := r.assign(ctx, fips, h.server); err != nil {
+		if err := r.assign(ctx, fips, h.server, nil); err != nil {
 			return ctrl.Result{}, err
 		}
 		out.holder, out.ready, out.reason = h.node, true, reasonAssigned
 		out.message = fmt.Sprintf("Floating IPs are on eligible node %s", h.node)
-		if group.Status.Node != h.node {
-			out.record = r.observed(ctx, group, snap, fips, h.node)
-		}
 	case placement.Move:
 		sid, err := r.serverOf(ctx, snap.byName[d.Target])
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		// Pending before the first assign: if the move is interrupted, the
-		// retry that finds the FIPs on the target completes this move.
 		m := moveInfo{from: h.node, to: d.Target, reason: d.Reason, at: in.Now}
-		r.setPending(group.Name, m)
-		if err := r.assign(ctx, fips, sid); err != nil {
-			if errors.Is(err, errHolderChanged) {
-				r.clearPending(group.Name)
-			}
+		if err := r.assign(ctx, fips, sid, func() error { return r.persistPending(ctx, group, m) }); err != nil {
 			return ctrl.Result{}, err
 		}
-		r.announceMove(ctx, group, snap, fips, m)
-		m.announced = true
-		r.setPending(group.Name, m)
-		out.holder, out.record, out.moved, out.ready, out.reason = d.Target, &m, true, true, reasonAssigned
+		out.holder, out.record, out.moved, out.announce = d.Target, &m, true, true
+		out.ready, out.reason = true, reasonAssigned
 		out.message = fmt.Sprintf("Floating IPs are on eligible node %s", d.Target)
 	}
+	recordArrival(group, &out, pending, pendingHere, in.Now)
 	return r.finish(ctx, group, out)
 }
 
-// observed records a holder the controller did not just move the FIPs to:
-// the completion of its own move whose status write failed, or an
-// assignment made outside the controller.
-func (r *FloatingIPGroupReconciler) observed(ctx context.Context, group *v1alpha1.FloatingIPGroup, snap *snapshot,
-	fips []groupFIP, node string) *moveInfo {
-	r.mu.Lock()
-	m, ok := r.pending[group.Name]
-	r.mu.Unlock()
-	if ok && m.to == node {
-		if !m.announced {
-			r.announceMove(ctx, group, snap, fips, m)
-			m.announced = true
-			r.setPending(group.Name, m)
-		}
-		return &m
+// activePending is the group's pending move unless it is too old to still
+// explain where the Floating IPs are.
+func (r *FloatingIPGroupReconciler) activePending(group *v1alpha1.FloatingIPGroup) *v1alpha1.PendingMove {
+	p := group.Status.PendingMove
+	if p == nil || r.now().Sub(p.StartedAt.Time) > pendingMoveMaxAge {
+		return nil
 	}
-	m = moveInfo{from: group.Status.Node, to: node, reason: v1alpha1.MoveReasonExternal, at: r.now()}
-	movesTotal.WithLabelValues(group.Name, string(m.reason)).Inc()
-	logf.FromContext(ctx).Info("Floating IPs found on another node",
-		"group", group.Name, "ips", fipAddresses(fips), "from", m.from, "to", m.to, "reason", m.reason)
-	r.Recorder.Eventf(group, corev1.EventTypeNormal, reasonMoved,
-		"Floating IPs found on eligible node %s (was %q), assigned outside the controller", node, m.from)
-	return &m
+	return p
+}
+
+// persistPending records a move before its first Hetzner assign, so any
+// leader that finds the Floating IPs on the target completes it.
+func (r *FloatingIPGroupReconciler) persistPending(ctx context.Context, group *v1alpha1.FloatingIPGroup, m moveInfo) error {
+	before := group.DeepCopy()
+	group.Status.PendingMove = &v1alpha1.PendingMove{Node: m.to, Reason: m.reason, StartedAt: metav1.NewTime(m.at)}
+	return r.Status().Patch(ctx, group, client.MergeFrom(before))
+}
+
+func pendingMoveInfo(group *v1alpha1.FloatingIPGroup, p *v1alpha1.PendingMove) *moveInfo {
+	return &moveInfo{from: group.Status.Node, to: p.Node, reason: p.Reason, at: p.StartedAt.Time}
+}
+
+// recordArrival records where the Floating IPs are when this reconcile did
+// not move them: a pending move whose IPs all arrived completes, a half-done
+// one is kept, and an eligible holder missing from status counts as External.
+func recordArrival(group *v1alpha1.FloatingIPGroup, out *outcome, pending *v1alpha1.PendingMove, pendingHere bool,
+	now time.Time) {
+	switch {
+	case out.record != nil:
+	case pendingHere && out.holder == pending.Node:
+		out.record, out.moved, out.announce = pendingMoveInfo(group, pending), true, true
+	case pendingHere:
+		out.keepPending = true
+	case out.ready && group.Status.Node != out.holder:
+		out.record = &moveInfo{from: group.Status.Node, to: out.holder, reason: v1alpha1.MoveReasonExternal, at: now}
+		out.announce = true
+	}
 }
 
 func fipAddresses(fips []groupFIP) []string {
@@ -333,11 +345,18 @@ func fipAddresses(fips []groupFIP) []string {
 	return out
 }
 
-// announceMove counts, logs and reports a move the controller made.
+// announceMove counts, logs and reports a recorded move.
 func (r *FloatingIPGroupReconciler) announceMove(ctx context.Context, group *v1alpha1.FloatingIPGroup, snap *snapshot,
 	fips []groupFIP, m moveInfo) {
 	ips := fipAddresses(fips)
 	movesTotal.WithLabelValues(group.Name, string(m.reason)).Inc()
+	if m.reason == v1alpha1.MoveReasonExternal {
+		logf.FromContext(ctx).Info("Floating IPs found on another node",
+			"group", group.Name, "ips", ips, "from", m.from, "to", m.to, "reason", m.reason)
+		r.Recorder.Eventf(group, corev1.EventTypeNormal, reasonMoved,
+			"Floating IPs found on eligible node %s (was %q), assigned outside the controller", m.to, m.from)
+		return
+	}
 	logf.FromContext(ctx).Info("Moved Floating IPs",
 		"group", group.Name, "ips", ips, "from", m.from, "to", m.to, "reason", m.reason)
 	msg := fmt.Sprintf("Moved Floating IPs %s of group %s from %q to %q (%s)",
@@ -422,28 +441,12 @@ func (r *FloatingIPGroupReconciler) forget(group string) {
 	forgetGroupMetrics(group)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.pending, group)
 	delete(r.assignments, group)
 	for k := range r.healthErrs {
 		if strings.HasPrefix(k, group+"\x00") {
 			delete(r.healthErrs, k)
 		}
 	}
-}
-
-func (r *FloatingIPGroupReconciler) clearPending(group string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.pending, group)
-}
-
-func (r *FloatingIPGroupReconciler) setPending(group string, m moveInfo) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.pending == nil {
-		r.pending = map[string]moveInfo{}
-	}
-	r.pending[group] = m
 }
 
 func (r *FloatingIPGroupReconciler) now() time.Time {

@@ -27,6 +27,7 @@ Status:
 | `status.node` | Node currently holding the Floating IPs. |
 | `status.since` | When they arrived on that node. |
 | `status.reason` | Why: `Initial`, `NodeCordoned`, `ProbeFailed`, `EndpointsNotReady`, `NodeNotReady`, `ServerGone`, `External`. |
+| `status.pendingMove` | A move that was started but not yet recorded: target `node`, `reason`, `startedAt`. Written before the first Hetzner assign and cleared once the move is recorded, so a new leader finishes the move with its real reason (see [Interrupted moves](how-it-works.md#interrupted-moves)). |
 | `status.conditions` | `Ready` and `Degraded`, see below. |
 
 ### Conditions

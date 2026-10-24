@@ -227,6 +227,36 @@ spec:
               node:
                 description: node is the node currently holding the Floating IPs.
                 type: string
+              pendingMove:
+                description: |-
+                  pendingMove is a move that was started but not yet recorded, so another
+                  leader can finish it with its real reason.
+                properties:
+                  node:
+                    description: node is the node the Floating IPs are being moved
+                      to.
+                    minLength: 1
+                    type: string
+                  reason:
+                    description: reason is why the move was started.
+                    enum:
+                    - Initial
+                    - NodeCordoned
+                    - ProbeFailed
+                    - EndpointsNotReady
+                    - NodeNotReady
+                    - ServerGone
+                    - External
+                    type: string
+                  startedAt:
+                    description: startedAt is when the move was started.
+                    format: date-time
+                    type: string
+                required:
+                - node
+                - reason
+                - startedAt
+                type: object
               reason:
                 description: reason is why the Floating IPs are on the node.
                 enum:

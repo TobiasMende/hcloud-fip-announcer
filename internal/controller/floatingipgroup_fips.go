@@ -136,15 +136,21 @@ func (h holder) alignedNode(fips []groupFIP) string {
 }
 
 // findHolder resolves the Hetzner assignment to a cluster node. When the
-// FIPs are split (an interrupted move), the node in status wins, so the move
-// is completed or undone as one unit. This also covers a leader change in the
-// middle of a move: the new leader has no pending move in memory, but finds
-// the split through Hetzner and repairs it from status.node. Only an
-// interrupted initial assignment (status.node still empty) is then recorded
-// as External, because nothing tells the new leader it was its predecessor.
+// FIPs are split (an interrupted move), the pending move's target wins, then
+// the node in status, so the move is completed or undone as one unit.
 func (r *FloatingIPGroupReconciler) findHolder(ctx context.Context, group *v1alpha1.FloatingIPGroup, snap *snapshot,
-	fips []groupFIP) (holder, error) {
+	fips []groupFIP, pending *v1alpha1.PendingMove) (holder, error) {
 	var h holder
+	rank := func(node string) int {
+		switch {
+		case pending != nil && node == pending.Node:
+			return 2
+		case node == group.Status.Node:
+			return 1
+		}
+		return 0
+	}
+	best := -1
 	for _, f := range fips {
 		sid := f.fip.ServerID
 		if sid == 0 {
@@ -167,8 +173,8 @@ func (r *FloatingIPGroupReconciler) findHolder(ctx context.Context, group *v1alp
 			}
 			node = srv.Name
 		}
-		if h.node == "" || node == group.Status.Node {
-			h.node, h.server = node, sid
+		if rank(node) > best {
+			h.node, h.server, best = node, sid, rank(node)
 		}
 	}
 	if h.node == "" {
@@ -203,8 +209,9 @@ func (r *FloatingIPGroupReconciler) findHolder(ctx context.Context, group *v1alp
 }
 
 // assign puts every FIP on the server. The holder is re-read from Hetzner
-// first; a change since the last poll aborts with errHolderChanged.
-func (r *FloatingIPGroupReconciler) assign(ctx context.Context, fips []groupFIP, server int64) error {
+// first; a change since the last poll aborts with errHolderChanged. prepare
+// runs after that check, before the first assign.
+func (r *FloatingIPGroupReconciler) assign(ctx context.Context, fips []groupFIP, server int64, prepare func() error) error {
 	aligned := true
 	for _, f := range fips {
 		aligned = aligned && f.fip.ServerID == server
@@ -221,6 +228,11 @@ func (r *FloatingIPGroupReconciler) assign(ctx context.Context, fips []groupFIP,
 			return errHolderChanged
 		}
 		fips[i].fip = fresh
+	}
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			return err
+		}
 	}
 	// Issue every assignment before waiting, so both families switch together.
 	var ids []int64
