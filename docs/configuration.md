@@ -185,6 +185,7 @@ tolerations:
 | `fip_announcer_eligible_nodes` | `group` | Number of eligible nodes. |
 | `fip_announcer_group_degraded` | `group` | 1 when `Degraded`. |
 | `fip_announcer_probe_healthy` | `group`, `node`, `service` | 1 healthy, 0 failing. |
+| `fip_announcer_probe_duration_seconds` | `group`, `node` | Histogram of the duration of one probe attempt (all of a target's pod IPs), successful or failing; a timeout lands in the top bucket. |
 | `fip_announcer_hcloud_requests_total` | `method`, `code` | Hetzner API requests (every attempt, retries included). |
 | `fip_announcer_hcloud_request_duration_seconds` | | Hetzner API latency histogram. |
 
