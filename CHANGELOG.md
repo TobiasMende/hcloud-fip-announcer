@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.2.0...v0.3.0) (2026-10-24)
+
+
+### Features
+
+* probe duration metric ([016f693](https://github.com/TobiasMende/hcloud-fip-announcer/commit/016f69352180da9bb1ee8cbc7e8ce3b45dc7ecf8))
+* probe duration metric ([2e99db3](https://github.com/TobiasMende/hcloud-fip-announcer/commit/2e99db3931f16d0005160ca1b955e796bc645ca0)), closes [#6](https://github.com/TobiasMende/hcloud-fip-announcer/issues/6)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/onsi/ginkgo/v2 to v2.33.1 ([d6b9197](https://github.com/TobiasMende/hcloud-fip-announcer/commit/d6b919727cb0c80bd6035df3a77d61df51858513))
+* **deps:** update module github.com/onsi/ginkgo/v2 to v2.33.1 ([e8c19ac](https://github.com/TobiasMende/hcloud-fip-announcer/commit/e8c19acce1446e9c806cc1ce80c28300bc3afdb8))
+* **deps:** update module github.com/onsi/gomega to v1.44.0 ([a9dbf0f](https://github.com/TobiasMende/hcloud-fip-announcer/commit/a9dbf0fecc14ff2005ade334197ed847fafec7fe))
+* **deps:** update module github.com/onsi/gomega to v1.44.0 ([e603992](https://github.com/TobiasMende/hcloud-fip-announcer/commit/e603992ea210297b3c54cf187c71e46b36208208))
+* persist pending moves across leader changes ([5314bc8](https://github.com/TobiasMende/hcloud-fip-announcer/commit/5314bc843409478081a6ca7e58280f8ac8fd6455))
+* persist pending moves across leader changes ([1b15b1d](https://github.com/TobiasMende/hcloud-fip-announcer/commit/1b15b1d7007198805435227969b6d32c039137b9)), closes [#7](https://github.com/TobiasMende/hcloud-fip-announcer/issues/7)
+
 ## [0.2.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 
