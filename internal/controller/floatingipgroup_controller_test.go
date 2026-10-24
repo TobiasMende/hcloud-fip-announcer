@@ -318,9 +318,11 @@ func (e *env) getGroup(name string) *v1alpha1.FloatingIPGroup {
 	return g
 }
 
-// flakyStatusClient fails the next status writes.
+// flakyStatusClient lets skip status writes pass, then fails the next
+// failures.
 type flakyStatusClient struct {
 	client.Client
+	skip     atomic.Int32
 	failures atomic.Int32
 }
 
@@ -335,7 +337,7 @@ type flakyStatusWriter struct {
 
 func (w *flakyStatusWriter) Patch(ctx context.Context, obj client.Object, patch client.Patch,
 	opts ...client.SubResourcePatchOption) error {
-	if w.c.failures.Add(-1) >= 0 {
+	if w.c.skip.Add(-1) < 0 && w.c.failures.Add(-1) >= 0 {
 		return errors.New("status write failed")
 	}
 	return w.SubResourceWriter.Patch(ctx, obj, patch, opts...)
@@ -682,6 +684,8 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		g := e.get()
 		Expect(g.Status.Node).To(Equal(e.node("b")))
 		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonNodeCordoned))
+		Expect(g.Status.PendingMove).To(BeNil())
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonNodeCordoned)))).To(Equal(1.0))
 	})
 
 	It("TestExternalMoveToEligibleNodeAccepted", func() {
@@ -979,7 +983,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		Expect(events).NotTo(ContainElement(ContainSubstring("outside the controller")))
 	})
 
-	It("TestPendingMoveSurvivesFailedStatusWrite", func() {
+	It("TestFailedPendingWriteDoesNotAssign", func() {
 		e := newEnv([]string{"a", "b"}, "a", "b")
 		e.createGroup(familyIPv4)
 		flaky := &flakyStatusClient{Client: cachedClient}
@@ -988,17 +992,165 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 
 		_, err := e.reconcile()
 		Expect(err).To(MatchError(ContainSubstring("status write failed")))
-		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("a")))
-		Expect(e.get().Status.Node).To(BeEmpty())
-		Expect(e.events()).To(ContainElement(ContainSubstring("Moved")))
+		Expect(e.fake.CallCount(hetzner.MethodAssign)).To(BeZero())
+		Expect(e.get().Status.PendingMove).To(BeNil())
 
 		e.mustReconcile()
 		g := e.get()
 		Expect(g.Status.Node).To(Equal(e.node("a")))
 		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonInitial))
+		Expect(g.Status.PendingMove).To(BeNil())
+	})
+
+	It("TestPendingMoveSurvivesFailedStatusWrite", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4)
+		flaky := &flakyStatusClient{Client: cachedClient}
+		flaky.skip.Store(1)
+		flaky.failures.Store(1)
+		e.r.Client = flaky
+
+		_, err := e.reconcile()
+		Expect(err).To(MatchError(ContainSubstring("status write failed")))
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("a")))
+		g := e.get()
+		Expect(g.Status.Node).To(BeEmpty())
+		Expect(g.Status.PendingMove).NotTo(BeNil())
+		Expect(g.Status.PendingMove.Node).To(Equal(e.node("a")))
+		Expect(e.events()).NotTo(ContainElement(ContainSubstring("Moved")))
+
+		e.mustReconcile()
+		g = e.get()
+		Expect(g.Status.Node).To(Equal(e.node("a")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonInitial))
+		Expect(g.Status.PendingMove).To(BeNil())
 		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonInitial)))).To(Equal(1.0))
 		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
-		Expect(e.events()).To(BeEmpty())
+		events := e.events()
+		Expect(events).To(ContainElement(ContainSubstring("Moved")))
+		Expect(events).NotTo(ContainElement(ContainSubstring("outside the controller")))
+	})
+
+	It("TestLeaderChangeAfterAssignKeepsReason", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4, familyIPv6)
+		e.mustReconcile()
+		e.cordon()
+		e.clock.Advance(time.Second)
+		started := e.clock.Now()
+		flaky := &flakyStatusClient{Client: cachedClient}
+		flaky.skip.Store(1)
+		flaky.failures.Store(1)
+		e.r.Client = flaky
+		e.events()
+
+		By("the leader dies after the assign, before recording the move")
+		_, err := e.reconcile()
+		Expect(err).To(HaveOccurred())
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("b")))
+		Expect(e.fip(familyIPv6).ServerID).To(Equal(e.serverID("b")))
+		Expect(e.get().Status.Node).To(Equal(e.node("a")))
+
+		By("a new leader")
+		e.r = e.newReconciler()
+		e.clock.Advance(5 * time.Second)
+		e.mustReconcile()
+
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("b")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonNodeCordoned))
+		Expect(g.Status.Since.Time).To(BeTemporally("==", started))
+		Expect(g.Status.PendingMove).To(BeNil())
+		expectReady(g)
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonNodeCordoned)))).To(Equal(1.0))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
+		events := e.events()
+		Expect(events).To(HaveLen(4))
+		Expect(events).NotTo(ContainElement(ContainSubstring("outside the controller")))
+	})
+
+	It("TestStalePendingMoveFoundElsewhereIsExternal", func() {
+		e := newEnv([]string{"a", "b", "c"}, "a", "b", "c")
+		e.createGroup(familyIPv4, familyIPv6)
+		e.mustReconcile()
+		e.cordon()
+		flaky := &flakyStatusClient{Client: cachedClient}
+		flaky.skip.Store(1)
+		flaky.failures.Store(1)
+		e.r.Client = flaky
+		_, err := e.reconcile()
+		Expect(err).To(HaveOccurred())
+		Expect(e.get().Status.PendingMove).NotTo(BeNil())
+		target := e.get().Status.PendingMove.Node
+		other := e.node("b")
+		suffix := "b"
+		if target == other {
+			other, suffix = e.node("c"), "c"
+		}
+		e.moveExternally(familyIPv4, suffix)
+		e.moveExternally(familyIPv6, suffix)
+
+		e.clock.Advance(30 * time.Second)
+		e.mustReconcile()
+
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(other))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonExternal))
+		Expect(g.Status.PendingMove).To(BeNil())
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonNodeCordoned)))).To(BeZero())
+	})
+
+	It("TestLeaderChangeWithSplitFIPsAndEmptyProber", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4, familyIPv6)
+		e.mustReconcile()
+		e.prober.setResult(eligibility.NodeKey{Node: e.node("a"), Service: e.svcKey()}, false)
+		e.clock.Advance(30 * time.Second)
+		e.fake.SetErrSequence(hetzner.MethodAssign, nil, errors.New("action failed"))
+
+		By("the move to b is interrupted after IPv4")
+		_, err := e.reconcile()
+		Expect(err).To(HaveOccurred())
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("b")))
+		Expect(e.fip(familyIPv6).ServerID).To(Equal(e.serverID("a")))
+
+		By("a new leader whose prober has no results yet completes the move")
+		e.prober = &fakeProber{targets: map[string][]probe.Target{}, results: map[eligibility.NodeKey]bool{}}
+		e.r = e.newReconciler()
+		e.mustReconcile()
+
+		Expect(e.fip(familyIPv6).ServerID).To(Equal(e.serverID("b")))
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("b")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonProbeFailed))
+		Expect(g.Status.PendingMove).To(BeNil())
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonProbeFailed)))).To(Equal(1.0))
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
+	})
+
+	It("TestExpiredPendingMoveRealignsToStatusNode", func() {
+		e := newEnv([]string{"a", "b"}, "a", "b")
+		e.createGroup(familyIPv4, familyIPv6)
+		e.mustReconcile()
+		e.prober.setResult(eligibility.NodeKey{Node: e.node("a"), Service: e.svcKey()}, false)
+		e.clock.Advance(30 * time.Second)
+		e.fake.SetErrSequence(hetzner.MethodAssign, nil, errors.New("action failed"))
+		_, err := e.reconcile()
+		Expect(err).To(HaveOccurred())
+
+		By("a new leader with an empty prober long after the move started")
+		e.prober = &fakeProber{targets: map[string][]probe.Target{}, results: map[eligibility.NodeKey]bool{}}
+		e.r = e.newReconciler()
+		e.clock.Advance(pendingMoveMaxAge + time.Second)
+		e.mustReconcile()
+
+		Expect(e.fip(familyIPv4).ServerID).To(Equal(e.serverID("a")))
+		Expect(e.fip(familyIPv6).ServerID).To(Equal(e.serverID("a")))
+		g := e.get()
+		Expect(g.Status.Node).To(Equal(e.node("a")))
+		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonInitial))
+		Expect(g.Status.PendingMove).To(BeNil())
+		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonExternal)))).To(BeZero())
 	})
 
 	It("TestInvalidHealthCheckReportedOnChange", func() {
@@ -1033,7 +1185,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		Expect(e.r.healthErrs).To(BeEmpty())
 	})
 
-	It("TestHolderChangedClearsPendingMove", func() {
+	It("TestHolderChangedPersistsNoPendingMove", func() {
 		e := newEnv([]string{"a", "b"}, "a", "b")
 		e.createGroup(familyIPv4)
 		e.mustReconcile()
@@ -1045,6 +1197,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 		g := e.get()
 		Expect(g.Status.Node).To(Equal(e.node("b")))
 		Expect(g.Status.Reason).To(Equal(v1alpha1.MoveReasonExternal))
+		Expect(g.Status.PendingMove).To(BeNil())
 		Expect(testutil.ToFloat64(movesTotal.WithLabelValues(e.group, string(v1alpha1.MoveReasonNodeCordoned)))).To(BeZero())
 		Expect(e.fake.CallCount(hetzner.MethodAssign)).To(Equal(1))
 	})

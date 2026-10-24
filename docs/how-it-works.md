@@ -98,6 +98,24 @@ IPs; if the holder changed since the last poll it decides again on fresh data.
 429 and 5xx responses are retried with backoff. If a refresh fails the last
 snapshot is kept and retried after a short backoff.
 
+## Interrupted moves
+
+Before the first Hetzner assign of a move the controller writes
+`status.pendingMove` (target node, reason, start time). If that write fails,
+nothing is assigned. Once the move is recorded in `status.node`, `reason` and
+`since`, the pending move is cleared in the same write, and only then is the
+move counted in `fip_announcer_moves_total` and reported as an event.
+
+If the leader dies, or a write fails, between the assign and that record, any
+leader that finds the Floating IPs on the pending target completes the move
+with its real reason and its original start time as `since`; it is not
+reported as `External`. Split Floating IPs (one family moved, the other not)
+are aligned to the pending target if it is eligible, else to `status.node`.
+Floating IPs found on a third node mean someone else moved them: `External`,
+and the pending move is dropped. A pending move older than 10 minutes no
+longer explains anything and is ignored. Anti-flap counts from the pending
+move's start once its target holds the Floating IPs.
+
 ## Assignments made outside the controller
 
 The holder is whatever Hetzner says.
@@ -133,6 +151,5 @@ IP unless a group selects them (see
 
 - IPv6 via Cilium is untested; NAT46/64 is planned.
 - No `hostNetwork` mode yet; a per-node agent is planned.
-- A leader change in the middle of a move briefly re-aligns split Floating IPs
-  from `status.node`; an interrupted initial assignment is then recorded as
-  `External`.
+- A leader that dies between recording a move and reporting it loses that
+  move's event and counter increment (never double-counts it).

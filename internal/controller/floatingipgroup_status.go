@@ -65,6 +65,9 @@ func (r *FloatingIPGroupReconciler) finish(ctx context.Context, group *v1alpha1.
 	}
 	meta.SetStatusCondition(&st.Conditions, ready)
 	meta.SetStatusCondition(&st.Conditions, degraded)
+	if !out.keepPending {
+		st.PendingMove = nil
+	}
 
 	r.updateMetrics(group, out)
 
@@ -72,10 +75,10 @@ func (r *FloatingIPGroupReconciler) finish(ctx context.Context, group *v1alpha1.
 		if err := r.Status().Patch(ctx, group, client.MergeFrom(before)); err != nil {
 			return ctrl.Result{}, err
 		}
+		if out.announce && out.record != nil {
+			r.announceMove(ctx, group, out.snap, out.fips, *out.record)
+		}
 	}
-	r.mu.Lock()
-	delete(r.pending, group.Name)
-	r.mu.Unlock()
 
 	requeue := r.PollInterval
 	if out.requeue > 0 && out.requeue < requeue {
