@@ -846,8 +846,7 @@ var _ = Describe("FloatingIPGroup reconciler", func() {
 			return e.fake.CallCount(hetzner.MethodAllFloatingIPs) + e.fake.CallCount(hetzner.MethodAllServers)
 		}
 		perItemReads := func() int {
-			return e.fake.CallCount(hetzner.MethodFloatingIPByName) + e.fake.CallCount(hetzner.MethodServer) +
-				e.fake.CallCount(hetzner.MethodServerByName)
+			return e.fake.CallCount(hetzner.MethodFloatingIPByName)
 		}
 
 		By("the first round costs one list of each for both groups and all nodes")

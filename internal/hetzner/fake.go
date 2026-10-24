@@ -9,6 +9,8 @@ import (
 	"net"
 	"slices"
 	"sync"
+
+	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 )
 
 // Method names used as keys for SetErr and CallCount.
@@ -19,8 +21,6 @@ const (
 	MethodSetLabels           = "SetLabels"
 	MethodSetDeleteProtection = "SetDeleteProtection"
 	MethodDelete              = "Delete"
-	MethodServer              = "Server"
-	MethodServerByName        = "ServerByName"
 	MethodGetFloatingIP       = "GetFloatingIP"
 	MethodAllFloatingIPs      = "AllFloatingIPs"
 	MethodAllServers          = "AllServers"
@@ -148,6 +148,11 @@ func (f *Fake) CreateFloatingIP(_ context.Context, opts CreateOpts) (*FloatingIP
 	defer f.mu.Unlock()
 	if err := f.enter(MethodCreateFloatingIP); err != nil {
 		return nil, err
+	}
+	for _, existing := range f.fips {
+		if existing.Name == opts.Name {
+			return nil, hcloud.Error{Code: hcloud.ErrorCodeUniquenessError, Message: "name is already used"}
+		}
 	}
 	f.nextID++
 	fip := &FloatingIP{
@@ -287,35 +292,6 @@ func (f *Fake) Delete(_ context.Context, fipID int64) error {
 	}
 	delete(f.fips, fipID)
 	return nil
-}
-
-func (f *Fake) Server(_ context.Context, id int64) (*Server, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.enter(MethodServer); err != nil {
-		return nil, err
-	}
-	s, ok := f.servers[id]
-	if !ok {
-		return nil, ErrNotFound
-	}
-	cp := *s
-	return &cp, nil
-}
-
-func (f *Fake) ServerByName(_ context.Context, name string) (*Server, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err := f.enter(MethodServerByName); err != nil {
-		return nil, err
-	}
-	for _, s := range f.servers {
-		if s.Name == name {
-			cp := *s
-			return &cp, nil
-		}
-	}
-	return nil, ErrNotFound
 }
 
 func clone(fip *FloatingIP) *FloatingIP {

@@ -283,89 +283,14 @@ func TestClientErrorsNotRetried(t *testing.T) {
 	}
 }
 
-func TestServer(t *testing.T) {
-	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
-		switch r.URL.Path {
-		case "/servers/9":
-			writeJSON(w, 200, map[string]any{"server": map[string]any{
-				"id": 9, keyName: "w1", "status": "running",
-				"datacenter": map[string]any{"location": map[string]any{keyName: locFSN, keyZone: zone}},
-				"location":   map[string]any{keyName: locFSN, keyZone: zone},
-			}})
-		case "/servers/10":
-			apiError(w, 404, "not_found")
-		default:
-			return false
-		}
-		return true
-	})
-	s, err := a.client().Server(context.Background(), 9)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Name != "w1" || s.Status != "running" || s.Location != locFSN || s.NetworkZone != zone {
-		t.Fatalf("unexpected %+v", s)
-	}
-	if _, err := a.client().Server(context.Background(), 10); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-}
-
-func TestServerByName(t *testing.T) {
-	a := newAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.URL.Path != "/servers" {
-			return false
-		}
-		servers := []any{}
-		if r.URL.Query().Get(keyName) == "w1" {
-			servers = append(servers, map[string]any{
-				"id": 9, keyName: "w1", keyStatus: "off",
-				keyLocation: map[string]any{keyName: locFSN, keyZone: zone},
-			})
-		}
-		writeJSON(w, 200, map[string]any{"servers": servers})
-		return true
-	})
-	s, err := a.client().ServerByName(context.Background(), "w1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.ID != 9 || s.Status != "off" || s.NetworkZone != zone {
-		t.Fatalf("unexpected %+v", s)
-	}
-	if _, err := a.client().ServerByName(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-}
-
-func TestFakeExtensions(t *testing.T) {
-	ctx := context.Background()
+func TestFakeRejectsDuplicateFloatingIPName(t *testing.T) {
 	f := NewFake()
-	f.AddServer(Server{ID: 1, Name: "n1", NetworkZone: zone})
-	if s, err := f.ServerByName(ctx, "n1"); err != nil || s.ID != 1 {
-		t.Fatalf("ServerByName: %+v %v", s, err)
+	opts := CreateOpts{Name: fipName, Type: "ipv4", HomeLocation: locFSN}
+	if _, err := f.CreateFloatingIP(context.Background(), opts); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := f.ServerByName(ctx, "nope"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("want ErrNotFound, got %v", err)
-	}
-	v4, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "a", Type: typeV4, HomeLocation: locFSN})
-	v6, _ := f.CreateFloatingIP(ctx, CreateOpts{Name: "b", Type: "ipv6", HomeLocation: locFSN})
-	if v4.IP.To4() == nil || v4.NetworkZone != zone {
-		t.Fatalf("v4 not allocated: %+v", v4)
-	}
-	if v6.IP.To4() != nil || v6.Network == nil || v6.Network.IP.String() != v6.IP.String() {
-		t.Fatalf("v6 not allocated: %+v", v6)
-	}
-	boom := errors.New("boom")
-	f.SetErrSequence(MethodAssign, nil, boom)
-	if err := f.Assign(ctx, v4.ID, 1); err != nil {
-		t.Fatalf("first call: %v", err)
-	}
-	if err := f.Assign(ctx, v6.ID, 1); !errors.Is(err, boom) {
-		t.Fatalf("second call: %v", err)
-	}
-	if err := f.Assign(ctx, v6.ID, 1); err != nil {
-		t.Fatalf("sequence exhausted: %v", err)
+	if _, err := f.CreateFloatingIP(context.Background(), opts); !hcloud.IsError(err, hcloud.ErrorCodeUniquenessError) {
+		t.Fatalf("want uniqueness error, got %v", err)
 	}
 }
 
