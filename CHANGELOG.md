@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.4.0...v0.4.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes modules to v0.37.2 ([#37](https://github.com/TobiasMende/hcloud-fip-announcer/issues/37)) ([4c14992](https://github.com/TobiasMende/hcloud-fip-announcer/commit/4c149927406b59299b905980aa90943caafd5e8c))
+
 ## [0.4.0](https://github.com/TobiasMende/hcloud-fip-announcer/compare/v0.3.0...v0.4.0) (2026-10-24)
 
 
